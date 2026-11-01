@@ -59,13 +59,36 @@ class AdvertisementRadio:
 
 class DuplexClient:
     """One sequential session with the specific runtime-outbox echo firmware."""
-    def __init__(self, radio):
+    def __init__(self, radio, queue_notices=False):
         self.radio = radio
         self.state = 'new'
         self.round = 0
         self.sessions = set()
         self.last_session = None
         self.notices_received = set()
+        self.queue_notices = queue_notices
+        self.captured_notices = []
+
+    async def _exchange(self, data, accept):
+        if not self.queue_notices:
+            return await self.radio.exchange(data, accept)
+        def wanted(packet):
+            return accept(packet) or (len(packet) >= 5 and packet[0] == 0xb0
+                                      and 0x80 <= packet[1] <= 0xfe
+                                      and packet[2] == 0
+                                      and packet[1] not in self.notices_received)
+        while True:
+            packet = await self.radio.exchange(data, wanted)
+            if accept(packet):
+                return packet
+            number = packet[1]
+            payload = await self._notice(number, packet)
+            self.notices_received.add(number)
+            self.captured_notices.append((number, payload))
+
+    def pop_notices(self):
+        notices, self.captured_notices = self.captured_notices, []
+        return notices
 
     async def _notice(self, number, packet=None):
         if packet is None:
@@ -120,8 +143,8 @@ class DuplexClient:
             raise ValueError('client is not ready')
         if not isinstance(payload, bytes) or not 1 <= len(payload) <= 216:
             raise ValueError('request must contain 1-216 bytes')
-        if self.round >= 255:
-            raise ValueError('one boot supports at most 255 rounds')
+        if self.round >= (127 if self.queue_notices else 255):
+            raise ValueError('one boot supports at most 127 queued or 255 ordinary rounds')
         self.state = 'busy'
         try:
             session = secrets.token_bytes(2)
@@ -131,8 +154,8 @@ class DuplexClient:
             total = (len(payload) + 17) // 18
             for seq in range(total):
                 frame = b'\xa1' + session + bytes((seq, total)) + payload[seq*18:(seq+1)*18]
-                await self.radio.exchange(frame, lambda d, p=frame: d == p)
-            packet = await self.radio.exchange(b'\xa4' + session, lambda d: len(d) >= 6 and d[:4] == b'\xa2' + session + b'\0')
+                await self._exchange(frame, lambda d, p=frame: d == p)
+            packet = await self._exchange(b'\xa4' + session, lambda d: len(d) >= 6 and d[:4] == b'\xa2' + session + b'\0')
             count = packet[4]
             if not 1 <= count <= 12:
                 raise ValueError('invalid reply fragment count')
@@ -143,13 +166,13 @@ class DuplexClient:
                 reply.extend(packet[5:])
                 ack = b'\xa3' + session + bytes((seq,))
                 if seq + 1 == count:
-                    await self.radio.exchange(ack, lambda d: d == b'\xa5' + session)
+                    await self._exchange(ack, lambda d: d == b'\xa5' + session)
                 else:
-                    packet = await self.radio.exchange(ack, lambda d, i=seq+1: len(d) >= 6 and d[:4] == b'\xa2' + session + bytes((i,)))
+                    packet = await self._exchange(ack, lambda d, i=seq+1: len(d) >= 6 and d[:4] == b'\xa2' + session + bytes((i,)))
             if reply != payload[::-1]:
                 raise ValueError('device reply mismatch')
             number = self.round + 1
-            first = await self.radio.exchange(b'\xb3' + session, lambda d: len(d) >= 5 and d[:3] == bytes((0xb0, number, 0)))
+            first = await self._exchange(b'\xb3' + session, lambda d: len(d) >= 5 and d[:3] == bytes((0xb0, number, 0)))
             echo = await self._notice(number, first)
             if echo != payload:
                 raise ValueError('device outbox payload mismatch')
@@ -180,7 +203,19 @@ class DuplexClient:
             raise ValueError('clean shutdown requires a completed request')
         self.state = 'busy'
         try:
-            await self.radio.exchange(b'\xa6' + self.last_session, lambda d: d == b'\xa7' + self.last_session)
+            await self._exchange(b'\xa6' + self.last_session, lambda d: d == b'\xa7' + self.last_session)
+            self.state = 'closed'
+        except BaseException:
+            self.state = 'failed'
+            raise
+
+    async def shutdown_queued(self):
+        if not self.queue_notices or self.state != 'ready' or self.round:
+            raise ValueError('queued shutdown requires a ready session without requests')
+        self.state = 'busy'
+        try:
+            tag = secrets.token_bytes(2)
+            await self._exchange(b'\xb4' + tag, lambda d: d == b'\xb5' + tag)
             self.state = 'closed'
         except BaseException:
             self.state = 'failed'
@@ -191,7 +226,11 @@ async def interactive(timeout, probe="runtime"):
     if timeout <= 0:
         raise ValueError('timeout must be positive')
     async with AdvertisementRadio(timeout) as radio:
-        client = DuplexClient(radio)
+        client = DuplexClient(radio, queue_notices=probe == 'queued')
+        def print_notices():
+            for number, payload in client.pop_notices():
+                print(json.dumps({'event': 'device_notice', 'id': number,
+                                  'payload_hex': payload.hex()}), flush=True)
         try:
             startup = await client.start()
             print(json.dumps({'event': 'ready', 'startup_payload_hex': startup.hex()}), flush=True)
@@ -211,13 +250,20 @@ async def interactive(timeout, probe="runtime"):
                 except ValueError as exc:
                     print(str(exc), file=sys.stderr, flush=True)
                     continue
-                print(json.dumps(await client.request(payload)), flush=True)
+                result = await client.request(payload)
+                print_notices()
+                print(json.dumps(result), flush=True)
             if client.round:
                 await client.shutdown()
+                print_notices()
                 await asyncio.sleep(4)
                 print(json.dumps({'event': 'shutdown_acknowledged', 'cleanup_wait_seconds': 4}), flush=True)
-            elif probe == 'autonomous':
-                await client.shutdown_autonomous()
+            elif probe in ('autonomous', 'queued'):
+                if probe == 'queued':
+                    await client.shutdown_queued()
+                    print_notices()
+                else:
+                    await client.shutdown_autonomous()
                 await asyncio.sleep(4)
                 print(json.dumps({'event': 'shutdown_acknowledged', 'cleanup_wait_seconds': 4}), flush=True)
             else:

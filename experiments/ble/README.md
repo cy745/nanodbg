@@ -421,6 +421,22 @@ notice IDs as security.
 
 ### Bounded event queue experiment
 
+The queued interactive client now recognizes an unsolicited first fragment
+while waiting for a request or shutdown response. It acknowledges the entire
+notice and retries the interrupted command, retaining the notice for the
+caller. IDs 0x80–0xfe are reserved for events and request rounds are limited
+to 127 to avoid collision with the request echo IDs. It does not receive while
+waiting for terminal input, and the probe still has a finite watchdog and a
+bounded, nonpersistent queue.
+
+On 2026-11-02 `python -m experiments.ble.queue_contention_host` injected two
+touches before starting a 40-byte request. The host received event IDs 0x80
+and 0x81 during the request and verified both the reverse reply and original
+echo. The device log recorded both notices acknowledged before the request,
+zero dropped events, an empty queue, restored hook and controller shutdown.
+This demonstrates arbitration for this specific probe, not a general BLE
+connection or protection against spoofing or packet loss.
+
 `nano_ble_queue.[ch]` adds a four-entry FIFO of copied messages, each at most
 216 bytes, and `test_queue.c` checks bounds, full and empty behavior, copying,
 ordering and ring wrap. The caller must serialize queue access.

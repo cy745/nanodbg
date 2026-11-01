@@ -90,7 +90,56 @@ class AutonomousRadio(FakeRadio):
         return await super().exchange(data, accept)
 
 
+class ContentionRadio(FakeRadio):
+    def __init__(self):
+        super().__init__()
+        self.pending = [0x80, 0x81]
+        self.interruptions = 0
+
+    async def exchange(self, data, accept):
+        if data[0] == 0xb1 and data[1] in self.pending:
+            number = self.pending.pop(0)
+            packet = bytes((0xb2, number, 1))
+            assert accept(packet)
+            return packet
+        if data[0] in (0xa1, 0xb4) and self.pending:
+            self.interruptions += 1
+            packet = bytes((0xb0, self.pending[0], 0, 1, self.pending[0]))
+            assert accept(packet)
+            return packet
+        if data[0] == 0xb4:
+            self.shutdown_seen = True
+            packet = b'\xb5' + data[1:]
+            assert accept(packet)
+            return packet
+        return await super().exchange(data, accept)
+
+
 class DuplexTests(unittest.IsolatedAsyncioTestCase):
+    async def test_queued_notices_interrupt_and_resume_request(self):
+        radio = ContentionRadio()
+        client = DuplexClient(radio, queue_notices=True)
+        await client.start()
+        result = await client.request(b'hello')
+        self.assertEqual(result['echo_hex'], b'hello'.hex())
+        self.assertEqual(client.pop_notices(), [(0x80, b'\x80'), (0x81, b'\x81')])
+        self.assertEqual(client.pop_notices(), [])
+        self.assertEqual(radio.interruptions, 2)
+        await client.shutdown()
+
+    async def test_queued_shutdown_and_identifier_limit(self):
+        radio = ContentionRadio()
+        client = DuplexClient(radio, queue_notices=True)
+        await client.start()
+        client.round = 127
+        with self.assertRaises(ValueError):
+            await client.request(b'one')
+        self.assertEqual(client.state, 'ready')
+        client.round = 0
+        await client.shutdown_queued()
+        self.assertEqual(len(client.pop_notices()), 2)
+        self.assertTrue(radio.shutdown_seen)
+
     async def test_multiple_requests_and_shutdown(self):
         radio = FakeRadio()
         client = DuplexClient(radio)
