@@ -394,3 +394,26 @@ outbox echo matched, and the device reported hook restoration and successful
 scan/advertising shutdown. The `--probe` selection must match the deployed
 firmware. Notifications are received before interactive input; they are not
 an asynchronous background subscription or unrestricted duplex transport.
+
+
+### Runtime touch-driven device data
+
+`bttapprobe.c` replaces the autonomous timer notices with two screen buttons.
+Each accepted LVGL click constructs a six-byte notice in the app: little-endian
+32-bit device tick, button ID (1 or 2), and one-based accepted-click count.
+Message IDs start at `0x80`. The probe accepts a click only when its outbox is
+free and no host request is in progress; busy clicks are dropped. It also
+retains the runtime echo request protocol. `python -m experiments.ble.tap_host`
+uses nanodbg touch injection to click the two buttons, receives each notice,
+and sends one host request between the clicks. The script requires the matching
+probe, the resident touch debugger and Windows BLE advertising.
+
+A hardware test on 2026-11-02 received button/count pairs (1,1) and (2,2) at
+device ticks 6319 and 12553 respectively. Between them a seven-byte host
+request returned the correct reverse response and original outbox echo. Device
+logs confirm both button callbacks, one completed request, restored hook and
+successful scan/advertising shutdown. This verifies runtime-originated event
+data across both directions, not general asynchronous full-duplex operation:
+there is still no event queue or concurrency arbitration, and messages are
+unauthenticated broadcasts. Never treat the two-byte session or one-byte
+notice IDs as security.
