@@ -40,6 +40,16 @@ class HciRequestTests(unittest.TestCase):
                          [{'return': 625, 'payload_hex': '08000100'}])
         self.assertEqual(parse_result(frames, request)['acl_frames'],
                          [{'flags': 0x20, 'length': 4, 'payload_hex': '01020304', 'truncated': False}])
+        frame_line = b'acl-frame 20 04 00 01 02 03 04 \n'
+        many_frames = frames.replace(frame_line, frame_line * 12)
+        self.assertEqual(len(parse_result(many_frames, request)['acl_frames']), 12)
+        with self.assertRaises(ValueError):
+            parse_result(frames.replace(frame_line, frame_line * 13), request)
+        tx_line = b'acl-tx 71 02 00 00 08 00 01 00 \n'
+        many_tx = tx.replace(tx_line, tx_line * 4)
+        self.assertEqual(len(parse_result(many_tx, request)['acl_transmissions']), 4)
+        with self.assertRaises(ValueError):
+            parse_result(tx.replace(tx_line, tx_line * 5), request)
         with self.assertRaises(ValueError):
             parse_result(frames.replace(b'20 04 00 01', b'20 05 00 01'), request)
         with self.assertRaises(ValueError):

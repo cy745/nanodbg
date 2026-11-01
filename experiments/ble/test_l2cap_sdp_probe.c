@@ -17,6 +17,11 @@ int main(void) {
     const uint8_t wrong_cid[]={12,0,1,0,3,0x73,8,0,0x40,0,0xe2,0,0,0,0,0};
     const uint8_t more_options[]={12,0,1,0,4,1,8,0,0xe1,0,1,0,1,2,0,4};
     const uint8_t failed_config[]={10,0,1,0,5,0x74,6,0,0xe1,0,0,0,1,0};
+    const uint8_t info[]={6,0,1,0,0x0a,3,2,0,2,0};
+    const uint8_t info_answer[]={12,0,1,0,0x0b,3,8,0,2,0,0,0,0,0,0,0};
+    l2cap_sdp_input(&p,info,sizeof info-1); assert(!l2cap_sdp_next(&p,out));
+    l2cap_sdp_input(&p,info,sizeof info);
+    assert(l2cap_sdp_next(&p,out)==sizeof info_answer && !memcmp(out,info_answer,sizeof info_answer));
     l2cap_sdp_input(&p,pending,sizeof pending); assert(!l2cap_sdp_next(&p,out));
     l2cap_sdp_input(&p,wrong_cid,sizeof wrong_cid); assert(!l2cap_sdp_next(&p,out));
     l2cap_sdp_input(&p,success,sizeof success-1); assert(!l2cap_sdp_next(&p,out));

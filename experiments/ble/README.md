@@ -715,7 +715,7 @@ See the [Bluetooth L2CAP specification](https://www.bluetooth.com/wp-content/upl
 ### RFCOMM L2CAP connection probe
 
 An opt-in `ACL_L2CAP_PROBE` build sends an L2CAP Connection Request for
-RFCOMM PSM 0x0003, source CID 0x00e1, identifier 0x73. It records at most six
+RFCOMM PSM 0x0003, source CID 0x00e1, identifier 0x73. It records at most twelve
 ACL packets on that handle, retaining at most 64 bytes of each; packet boundary
 flags and original length are retained, but fragments are not reassembled.
 This shares the original stack and an arbitrary source CID, so collisions and
@@ -765,8 +765,8 @@ answers the peer's request, and after both sides' configuration steps sends an
 SDP ServiceSearchRequest for UUID 0x1000 with transaction 0x1234. It is a
 diagnostic, not a complete L2CAP/SDP stack: it does not reassemble fragments,
 handle continuation or general options, allocate a CID with the system stack,
-or synchronize the receive callback and timer. It records up to six received
-ACL frames and three subsequent outgoing payloads; drops are reported. The
+or synchronize the receive callback and timer. It records up to twelve received
+ACL frames and four subsequent outgoing payloads; drops are reported. The
 firmware send return value is not itself proof of radio delivery.
 
 On 2026-11-02 the probe connected to the same Windows adapter over unencrypted
@@ -859,6 +859,31 @@ response to the iPod's configuration request was captured in the three-second
 window, so the RFCOMM DLCI 0 SABM was not sent. There were no reported ACL
 capture drops. Longer observation and encryption-state capture are needed;
 the missing response alone does not establish its cause.
+
+The probe now answers a complete Extended Features Information Request with a
+zero feature mask (basic mode), including the peer's signaling identifier.
+The Bluetooth specification requires an Information Response to a valid request:
+[L2CAP information request](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-60/out/en/host/logical-link-control-and-adaptation-protocol-specification.html).
+In a subsequent hardware run the peer requested information type 2 (identifier
+7), and the probe sent `0c0001000b0708000200000000000000`. Authentication and
+the PSM 3 connection succeeded; the peer then returned a successful matching
+configuration response `0a00010005740600e10000000000`. After answering the
+peer's configuration request, the probe sent RFCOMM DLCI 0 SABM
+`04004000033f011c`; all four staged sends returned 625. No RFCOMM reply was
+captured in the three-second observation window, and no ACL or authentication
+events were reported dropped. This demonstrates completed L2CAP configuration
+and attempted RFCOMM setup, not establishment of an RFCOMM session or exchange
+of application data. The added information response is a plausible explanation
+for the progress, but a controlled comparison would be needed to establish
+causality.
+
+A repeat with a five-second capture window again completed authentication and
+L2CAP configuration. After the same SABM, the host sent
+`0400e100037301d7`: RFCOMM UA on DLCI 0 addressed to the iPod's local CID.
+Six ACL frames were recorded, with no reported ACL or authentication drops.
+This is evidence that the RFCOMM control channel was accepted in this run;
+DLCI negotiation for the listener's server channel and application payload
+transfer were not attempted. The host Bluetooth radio was restored afterward.
 
 
 ### Events during a host request and initial-publish retry

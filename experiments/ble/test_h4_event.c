@@ -54,8 +54,8 @@ int main(void) {
     for (uint8_t i=0;i<65;i++) h4_event_feed(&p,&i,1);
     assert(p.acl_records[2].length==65 && p.acl_records[2].saved==64 &&
            p.acl_records[2].data[63]==63);
-    for (int i=0;i<5;i++) h4_event_feed(&p,echo,sizeof echo);
-    assert(p.acl_record_count==6 && p.acl_dropped==2);
+    for (int i=0;i<11;i++) h4_event_feed(&p,echo,sizeof echo);
+    assert(p.acl_record_count==12 && p.acl_dropped==2);
     h4_event_init(&p,3,11); p.security_capture=1; p.security_handle=0x234;
     for (unsigned i=0;i<6;i++) p.security_address[i]=(uint8_t)(i+1);
     const uint8_t key_request[]={4,0x17,6,1,2,3,4,5,6};

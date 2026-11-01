@@ -7,7 +7,7 @@
 #include "l2cap_sdp_probe.h"
 #endif
 
-static char report[2048];
+static char report[4096];
 static int used;
 static void append(const char *s) { while (*s && used<(int)sizeof report-1) report[used++]=*s++; report[used]=0; }
 static void hexbyte(unsigned b) { const char *h="0123456789abcdef"; char s[4]={h[(b>>4)&15],h[b&15],' ',0}; append(s); }
@@ -73,7 +73,7 @@ static int acl_started, acl_send_rc;
 #ifdef ACL_SDP_PROBE
 static l2cap_sdp_probe sdp;
 static unsigned sdp_read, sdp_ticks, sdp_tx_count;
-static struct { int rc; unsigned len; uint8_t data[20]; } sdp_tx[3];
+static struct { int rc; unsigned len; uint8_t data[20]; } sdp_tx[4];
 static void finish_connection(lv_timer_t *timer);
 static void sdp_poll(lv_timer_t *timer) {
     while (sdp_read<inquiry_event.acl_record_count) {
@@ -82,7 +82,7 @@ static void sdp_poll(lv_timer_t *timer) {
             l2cap_sdp_input(&sdp,r->data,r->saved);
     }
     uint8_t data[20]; unsigned n;
-    while ((n=l2cap_sdp_next(&sdp,data))!=0 && sdp_tx_count<3) {
+    while (sdp_tx_count<4 && (n=l2cap_sdp_next(&sdp,data))!=0) {
         acl_segment_buffer buffer={0}; buffer.remaining=buffer.size=n; buffer.data=data;
         unsigned i=sdp_tx_count++;
         sdp_tx[i].len=n;
@@ -90,7 +90,7 @@ static void sdp_poll(lv_timer_t *timer) {
         sdp_tx[i].rc=((acl_send_t)(BT_HCI_SEND_STAGED | 1u))
             (2,inquiry_event.acl_handle | 0x2000,&buffer,n);
     }
-    if (++sdp_ticks>=30) { lv_timer_delete(timer); finish_connection(0); }
+    if (++sdp_ticks>=50) { lv_timer_delete(timer); finish_connection(0); }
 }
 #endif
 #ifdef ACL_L2CAP_PROBE

@@ -98,7 +98,7 @@ def parse_result(raw, request):
                 raise ValueError('malformed ACL transmission')
             transmissions.append({'return': int.from_bytes(fields[:4], 'little', signed=True),
                                   'payload_hex': fields[4:].hex()})
-        if len(transmissions) > 3 or (transmissions and not acl_send):
+        if len(transmissions) > 4 or (transmissions and not acl_send):
             raise ValueError('unexpected ACL transmissions')
         frames = []
         for line in (acl_frames or '').splitlines():
@@ -108,7 +108,7 @@ def parse_result(raw, request):
                 raise ValueError('malformed ACL frame')
             frames.append({'flags': flags, 'length': length, 'payload_hex': payload.hex(),
                            'truncated': len(payload) < length})
-        if len(frames) > 6 or (frames and acl_dropped is None) or (acl_dropped is not None and acl_send is None):
+        if len(frames) > 12 or (frames and acl_dropped is None) or (acl_dropped is not None and acl_send is None):
             raise ValueError('incomplete ACL capture')
         acl_echo_data = None if not acl_echo or acl_echo == 'none ' else bytes.fromhex(acl_echo)
         if acl_echo_data is not None and (len(acl_echo_data) < 8 or len(acl_echo_data) > 64 or

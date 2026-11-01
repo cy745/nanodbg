@@ -8,12 +8,16 @@ typedef struct {
     uint16_t peer_cid;
     uint8_t peer_config_id, peer_config_seen, peer_config_answered;
     uint8_t our_config_sent, our_config_ok, query_sent;
+    uint8_t info_id, info_pending;
 } l2cap_sdp_probe;
 
 static uint16_t l2cap_u16(const uint8_t *p) { return p[0] | ((uint16_t)p[1] << 8); }
 static void l2cap_sdp_input(l2cap_sdp_probe *s, const uint8_t *p, unsigned n) {
     if (n < 8 || l2cap_u16(p) != n-4 || l2cap_u16(p+2) != 1 ||
         l2cap_u16(p+6) != n-8) return;
+    if (p[4]==0x0a && p[5] && n==10 && l2cap_u16(p+8)==2) {
+        s->info_id=p[5]; s->info_pending=1;
+    }
     if (p[4]==3 && p[5]==0x73 && n==16 && l2cap_u16(p+10)==0x00e1 &&
         l2cap_u16(p+12)==0 && l2cap_u16(p+8)>=0x0040) s->peer_cid=l2cap_u16(p+8);
     if (p[4]==4 && p[5] && n>=12 && l2cap_u16(p+8)==0x00e1 &&
@@ -30,6 +34,12 @@ static void l2cap_sdp_input(l2cap_sdp_probe *s, const uint8_t *p, unsigned n) {
 
 /* Returns one complete ACL payload to send, or zero if no action is ready. */
 static unsigned l2cap_sdp_next(l2cap_sdp_probe *s, uint8_t out[20]) {
+    if (s->info_pending) {
+        /* Extended features: this diagnostic implements only basic mode. */
+        const uint8_t v[]={12,0,1,0,0x0b,0,8,0,2,0,0,0,0,0,0,0};
+        for (unsigned i=0;i<sizeof v;i++) out[i]=v[i];
+        out[5]=s->info_id; s->info_pending=0; return sizeof v;
+    }
     if (!s->peer_cid) return 0;
     if (!s->our_config_sent) {
         const uint8_t v[]={8,0,1,0,4,0x74,4,0,0,0,0,0};

@@ -19,7 +19,7 @@ typedef struct {
     uint16_t acl_handle, acl_length;
     volatile unsigned acl_seen;
     uint8_t acl_scratch[64], acl_data[64];
-    h4_acl_record acl_records[6];
+    h4_acl_record acl_records[12];
     volatile unsigned acl_record_count, acl_dropped;
     volatile int security_capture;
     uint8_t security_address[6], security_scratch[7];
@@ -73,7 +73,7 @@ static void h4_event_finish(h4_event_parser *p) {
         ((p->header[0] | ((unsigned)p->header[1]<<8)) & 0x0fff)==p->acl_handle) {
         unsigned length=p->header[2] | ((unsigned)p->header[3]<<8);
         p->acl_seen++;
-        if (p->acl_record_count < 6) {
+        if (p->acl_record_count < 12) {
             h4_acl_record *r=&p->acl_records[p->acl_record_count];
             r->flags=p->header[1] & 0xf0; r->length=length;
             r->saved=length < 64 ? length : 64;
