@@ -245,3 +245,26 @@ counter wrap or reboot. Observation of repeated advertisements and one
 acknowledgement does not prove recovery from lost confirmations, process
 restarts, or arbitrary radio loss. Existing hook and platform limitations
 remain.
+
+
+`btnoticereadyprobe.c` and `notice_ready_host.py` address the completion/notice
+collision in the previous experiment. Once a request completes, the device
+continues advertising `a5` until the host sends `b3` plus that session ID.
+Only then does it publish the next notice, which uses the same `b1`/`b2`
+acknowledgement as above. Startup notices remain unsolicited; subsequent
+notices are delivered only after a host readiness signal. Run
+`python -m experiments.ble.notice_ready_host HEX [HEX ...]` with this probe.
+
+On one device run the host deliberately delayed readiness four seconds after
+the first response and observed seven completion advertisements during the
+delay; the subsequent notice and a second exchange also completed. The
+device recorded two readiness signals, three notice acknowledgements, two
+completed exchanges, hook restoration, and successful stop statuses. This
+probe uses a larger log buffer, and the full summary was captured.
+
+This only addresses that particular advertisement-slot race. There is no
+durable queue, identity verification, or general process-restart recovery;
+an unacknowledged notice still blocks commands until the watchdog. Readiness
+is unauthenticated and short session identifiers can collide. BLE advertising
+and the hook are experimental, and a delayed device shutdown acknowledgement
+alone does not prove teardown.
