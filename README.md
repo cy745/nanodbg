@@ -104,5 +104,31 @@ Scanning uses Bleak and has been tested on Windows; Linux and macOS are
 unverified. The commands do not enable or disable the host radio. Advertising
 payloads are limited to 23 bytes and scanning matches up to 26 bytes. The
 experimental `0xffff` manufacturer field is a test marker, not an assigned
-company identifier for production use. No pairing, acknowledgement, encryption,
-fragmentation or retransmission is provided.
+company identifier for production use. These simple commands do not provide pairing, acknowledgement, encryption,
+fragmentation or retransmission. The separately deployed runtime-outbox probe
+has an experimental acknowledged fragment protocol, described below.
+
+
+With the experimental `btruntimeoutboxprobe.c` firmware deployed and started,
+`python -m nanodbg ble interactive` accepts one 1–216-byte hexadecimal message
+per line. It emits JSON events for the device startup notice and each exchange;
+enter `quit` or EOF after a successful request to request probe shutdown.
+For example:
+
+```text
+00
+00112233445566778899aabbccddeeff00112233
+quit
+```
+
+The probe reverses each request for a diagnostic response and then sends the
+original bytes via its device outbox. Apart from the startup notice, these are
+not independent device-originated application messages. This protocol uses
+unauthenticated, unencrypted broadcast, has short identifiers, and is not a
+reliable stream. Host advertising currently requires Windows; other systems
+have not been validated. The probe watchdog is 180 seconds, including idle
+time. If the session fails or exits before its first completed request, clean
+shutdown is not confirmed; the watchdog or reboot is needed. A shutdown event
+confirms the device acknowledged the command and the host waited four seconds;
+only the device log confirms hook and controller cleanup. See the probe README
+for deployment and protocol limitations.

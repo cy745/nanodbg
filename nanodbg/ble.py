@@ -67,7 +67,7 @@ async def advertise(data, duration):
             await asyncio.sleep(.1)
         else:
             raise ValueError('Windows BLE advertising did not start')
-        print('BLE advertising started', flush=True)
+        print('BLE advertising started', file=sys.stderr, flush=True)
         await asyncio.sleep(duration)
     finally:
         publisher.stop()

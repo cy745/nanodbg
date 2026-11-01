@@ -217,7 +217,13 @@ def main():
         command.add_argument('--duration', type=float, default=20)
     exchange = ble_sub.add_parser('roundtrip', help='run the two-window device echo experiment')
     exchange.add_argument('payload_hex', nargs='+', help='one or two distinct hex payloads')
+    interactive = ble_sub.add_parser('interactive', help='exchange multiple messages with the runtime outbox probe')
+    interactive.add_argument('--timeout', type=float, default=15, help='timeout per protocol step in seconds')
     args = parser.parse_args()
+    if args.command == 'ble' and args.ble_command == 'interactive':
+        from .ble_duplex import run_interactive
+        run_interactive(args.timeout)
+        return
     if args.command == 'ble':
         from .ble import run, run_roundtrip
         if args.ble_command == 'roundtrip':

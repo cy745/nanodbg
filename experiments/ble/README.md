@@ -342,3 +342,20 @@ a nonzero HCI controller status as a command failure as well as checking the
 transport return value. No nonzero controller status was induced in this run.
 The other one-slot, authentication, persistence, watchdog, and hook caveats
 remain.
+
+
+### Interactive host client
+
+`python -m nanodbg ble interactive` runs the same runtime-outbox protocol in
+a single process, accepting hex messages on stdin and emitting JSON events.
+It validates responses and the outbox data, uses unique session IDs within a
+process, and refuses to reuse a session after a protocol failure. It does not
+authenticate peers or guarantee recovery after a timeout. Run it promptly after
+the probe starts because the device watchdog runs even while waiting for input.
+
+On 2026-11-02 the interactive command was tested on the device with a one-byte
+request and a 20-byte, multi-fragment request in one process. Both reverse
+responses and both outbox messages matched. The probe log reported two
+completed rounds, `hook restored`, and zero transport/controller status for
+scan and advertisement shutdown. The host shutdown event alone is not proof
+of those cleanup operations.
