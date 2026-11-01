@@ -16,6 +16,10 @@ static rx_feed_t original_rx;
 static volatile uint32_t *rx_slot;
 static uint8_t connection_address[6];
 static int connection_accepted;
+#ifdef HCI_AUTH_PROBE
+static int auth_started, auth_rc;
+static uint8_t auth_status, auth_event;
+#endif
 #if defined(ACL_ECHO_PROBE) || defined(ACL_L2CAP_PROBE)
 typedef struct {
     uint8_t reserved0, index;
@@ -68,6 +72,20 @@ static int inquiry_hook(uint8_t *buf, uint16_t len) {
 static void save(void) { hb_fs_write("/Apps/Data/hci-result.txt",report,used+1); }
 static void finish_connection(lv_timer_t *timer) {
     (void)timer;
+#ifdef HCI_AUTH_PROBE
+    if (!auth_started && connection_accepted && inquiry_event.found && inquiry_event.data[0]==0) {
+        auth_started=1;
+        uint8_t params[2]={inquiry_event.data[1], inquiry_event.data[2]}, out[16];
+        int outlen=0;
+        inquiry_event.security_handle=(params[0] | ((uint16_t)params[1]<<8)) & 0x0fff;
+        for (unsigned i=0;i<6;i++) inquiry_event.security_address[i]=connection_address[i];
+        inquiry_event.security_capture=1;
+        auth_status=0xff; auth_event=0;
+        auth_rc=bt_hci_cmd_ack(0x0411,params,2,out,sizeof out,&outlen,&auth_status,&auth_event);
+        lv_timer_t *wait=lv_timer_create(finish_connection,5000,0);
+        if (wait) { lv_timer_set_repeat_count(wait,1); return; }
+    }
+#endif
 #if defined(ACL_ECHO_PROBE) || defined(ACL_L2CAP_PROBE)
     if (!acl_started && connection_accepted && inquiry_event.found && inquiry_event.data[0]==0) {
         acl_started=1;
@@ -95,6 +113,16 @@ static void finish_connection(lv_timer_t *timer) {
     int restored=*rx_slot==((uint32_t)&inquiry_hook | 1u);
     if (restored) { *rx_slot=(uint32_t)original_rx; append("restored\n"); }
     else append("changed\n");
+#ifdef HCI_AUTH_PROBE
+    if (auth_started) {
+        append("auth-request "); hexbyte(auth_rc & 255); hexbyte(auth_status); hexbyte(auth_event); append("\n");
+        for (unsigned i=0;i<inquiry_event.security_count;i++) {
+            append("auth-event "); hexbyte(inquiry_event.security_records[i].code);
+            hexbyte(inquiry_event.security_records[i].status); append("\n");
+        }
+        append("auth-dropped "); hexbyte(inquiry_event.security_dropped>255 ? 255 : inquiry_event.security_dropped); append("\n");
+    }
+#endif
 #if defined(ACL_ECHO_PROBE) || defined(ACL_L2CAP_PROBE)
     if (acl_started) {
         append("acl-send ");

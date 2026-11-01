@@ -16,6 +16,12 @@ class HciRequestTests(unittest.TestCase):
         self.assertEqual(parsed['connection_complete']['address'], '06:05:04:03:02:01')
         self.assertEqual(parsed['connection_complete']['handle'], 0x234)
         self.assertEqual(parsed['connection_cleanup_hex'], '060400000f')
+        auth = raw.replace(b'connection-cleanup',
+            b'auth-request 00 00 0f \nauth-event 17 ff \nauth-event 06 05 \nauth-dropped 00 \nconnection-cleanup')
+        self.assertEqual(parse_result(auth, request)['auth_events'],
+                         [{'event': 0x17, 'status': None}, {'event': 6, 'status': 5}])
+        with self.assertRaises(ValueError):
+            parse_result(auth.replace(b'auth-event 17 ff', b'auth-event 19 ff'), request)
         with_acl = raw.replace(b'connection-cleanup',
             b'acl-send 71 02 00 00 seen 01 echo 04 00 01 00 09 73 00 00 \nconnection-cleanup')
         parsed_acl = parse_result(with_acl, request)

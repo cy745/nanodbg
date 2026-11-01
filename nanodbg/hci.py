@@ -32,6 +32,7 @@ def parse_result(raw, request):
             r'((?:inquiry-result [0-9a-f]{2} [0-9a-f]{2} (?:[0-9a-f]{2} )*\r?\n)*)'
             r'(?:inquiry-dropped ([0-9a-f]{2}) \r?\n)?)?'
             r'(?:connection-complete (none |(?:[0-9a-f]{2} ){11})hook (restored|changed)\r?\n'
+            r'(?:auth-request ((?:[0-9a-f]{2} ){3})\r?\n((?:auth-event (?:[0-9a-f]{2} ){2}\r?\n)*)auth-dropped ([0-9a-f]{2}) \r?\n)?'
             r'(?:acl-send ((?:[0-9a-f]{2} ){4})seen ([0-9a-f]{2}) echo (none |(?:[0-9a-f]{2} )+)\r?\n)?'
             r'((?:acl-tx (?:[0-9a-f]{2} ){4}(?:[0-9a-f]{2} )+\r?\n)*)'
             r'((?:acl-frame (?:[0-9a-f]{2} ){3}(?:[0-9a-f]{2} )*\r?\n)*)(?:acl-dropped ([0-9a-f]{2}) \r?\n)?'
@@ -39,7 +40,8 @@ def parse_result(raw, request):
         if not match:
             raise ValueError('malformed HCI result')
         (nonce, opcode, params, rc, status, event, data, inquiry, hook, records, dropped,
-         connection, connection_hook, acl_send, acl_seen, acl_echo, acl_tx, acl_frames, acl_dropped, cleanup) = match.groups()
+         connection, connection_hook, auth_request, auth_events, auth_dropped,
+         acl_send, acl_seen, acl_echo, acl_tx, acl_frames, acl_dropped, cleanup) = match.groups()
         if (bytes.fromhex(nonce) != request[4:8] or bytes.fromhex(opcode) != request[8:10]
                 or bytes.fromhex(params) != request[11:]):
             raise ValueError('HCI result does not match request')
@@ -68,6 +70,15 @@ def parse_result(raw, request):
                                              connection_data[3:9] != request[11:17]):
             raise ValueError('connection event does not match target')
         cleanup_data = bytes.fromhex(cleanup) if cleanup else None
+        auth = bytes.fromhex(auth_request) if auth_request else None
+        security_events = []
+        for line in (auth_events or '').splitlines():
+            code, status_value = bytes.fromhex(line.removeprefix('auth-event '))
+            if code not in (0x05, 0x06, 0x16, 0x17, 0x18, 0x31, 0x32, 0x33, 0x34, 0x36, 0x3b):
+                raise ValueError('unexpected authentication event')
+            security_events.append({'event': code, 'status': status_value if code in (0x05, 0x06, 0x36) else None})
+        if len(security_events) > 8:
+            raise ValueError('too many authentication events')
         transmissions = []
         for line in (acl_tx or '').splitlines():
             fields = bytes.fromhex(line.removeprefix('acl-tx '))
@@ -112,6 +123,10 @@ def parse_result(raw, request):
                 'connection_complete_hex': connection_data.hex() if connection_data else None,
                 'connection_complete': connection_info,
                 'connection_hook': connection_hook,
+                'auth_request': {'rc': auth[0]-256 if auth[0] >= 128 else auth[0],
+                                 'controller_status': auth[1], 'event': auth[2]} if auth else None,
+                'auth_events': security_events,
+                'auth_dropped': int(auth_dropped, 16) if auth_dropped is not None else None,
                 'acl_send_return': int.from_bytes(bytes.fromhex(acl_send), 'little', signed=True) if acl_send else None,
                 'acl_packets_seen': int(acl_seen, 16) if acl_seen else None,
                 'acl_echo_hex': acl_echo_data.hex() if acl_echo_data else None,

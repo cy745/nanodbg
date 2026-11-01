@@ -21,6 +21,11 @@ typedef struct {
     uint8_t acl_scratch[64], acl_data[64];
     h4_acl_record acl_records[6];
     volatile unsigned acl_record_count, acl_dropped;
+    volatile int security_capture;
+    uint8_t security_address[6], security_scratch[7];
+    uint16_t security_handle;
+    struct { uint8_t code, status; } security_records[8];
+    volatile unsigned security_count, security_dropped;
     uint8_t scratch[H4_INQUIRY_MAX_BYTES];
     h4_inquiry_record records[H4_INQUIRY_MAX_RECORDS];
     volatile unsigned record_count, dropped;
@@ -32,6 +37,7 @@ static void h4_event_init(h4_event_parser *p, uint8_t code, uint8_t length) {
     p->match_address=0;
     p->acl_capture=0; p->acl_found=0; p->acl_seen=0; p->acl_length=0;
     p->acl_record_count=0; p->acl_dropped=0;
+    p->security_capture=0; p->security_count=0; p->security_dropped=0;
     p->record_count=0; p->dropped=0;
 }
 
@@ -40,6 +46,29 @@ static int h4_is_inquiry_result(uint8_t code) {
 }
 
 static void h4_event_finish(h4_event_parser *p) {
+    if (p->type==4 && p->security_capture) {
+        unsigned code=p->header[0], length=p->header[1], match=0, status=0xff;
+        if ((code==0x06 && length==3) || (code==0x05 && length==4)) {
+            match=((p->security_scratch[1] | ((unsigned)p->security_scratch[2]<<8)) & 0x0fff)==p->security_handle;
+            status=p->security_scratch[0];
+        } else if ((code==0x16 && length==6) || (code==0x17 && length==6) ||
+                   (code==0x18 && length==23) || (code==0x31 && length==6) ||
+                   (code==0x32 && length==9) || (code==0x33 && length==10) ||
+                   (code==0x34 && length==6) || (code==0x3b && length==10) ||
+                   (code==0x36 && length==7)) {
+            unsigned offset=code==0x36 ? 1 : 0;
+            match=1;
+            for (unsigned i=0;i<6;i++) if (p->security_scratch[i+offset]!=p->security_address[i]) match=0;
+            if (code==0x36) status=p->security_scratch[0];
+        }
+        if (match) {
+            if (p->security_count<8) {
+                p->security_records[p->security_count].code=code;
+                p->security_records[p->security_count].status=status;
+                p->security_count++;
+            } else p->security_dropped++;
+        }
+    }
     if (p->type==2 && p->acl_capture &&
         ((p->header[0] | ((unsigned)p->header[1]<<8)) & 0x0fff)==p->acl_handle) {
         unsigned length=p->header[2] | ((unsigned)p->header[3]<<8);
@@ -106,6 +135,10 @@ static void h4_event_feed(h4_event_parser *p, const uint8_t *data, unsigned leng
                 }
             }
         } else {
+            if (p->type==4 && p->security_capture &&
+                p->header[1]-p->remaining < (p->header[0]==0x36 ? 7u :
+                    (p->header[0]==0x06 ? 3u : (p->header[0]==0x05 ? 4u : 6u))))
+                p->security_scratch[p->header[1]-p->remaining]=b;
             if (p->type==2 && p->acl_capture &&
                 ((p->header[2] | ((unsigned)p->header[3]<<8))-p->remaining)<64)
                 p->acl_scratch[(p->header[2] | ((unsigned)p->header[3]<<8))-p->remaining]=b;

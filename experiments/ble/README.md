@@ -784,6 +784,26 @@ This establishes a specific SDP request/response over a configured dynamic
 channel in one run. It does not establish a general bidirectional application
 transport, delivery of arbitrary bytes, pairing, or successful RFCOMM access.
 
+### Classic authentication event probe
+
+An `HCI_AUTH_PROBE` build requests authentication on the newly established
+ACL handle and captures selected security event codes for that peer for five
+seconds. It records completion statuses where available, but does not retain
+link keys, passkeys, or other pairing payloads. The original receive callback
+continues to run; this experiment does not provide pairing responses. The
+bounded capture reports dropped events and is subject to callback/timer races.
+
+On 2026-11-02 a test against the Windows adapter at C8:5E:A9:87:84:52
+created an unencrypted classic ACL connection, and the controller accepted
+Authentication Requested (command status 0). The probe captured Link Key
+Request (0x17), followed by I/O Capability Request (0x31), with zero reported
+drops. No Authentication Complete event arrived during the five-second window;
+the hook was restored and the disconnect command was accepted. This shows
+that authentication negotiation started, not that pairing succeeded or failed,
+and does not establish the cause of the earlier RFCOMM refusal. A previous
+attempt could not confirm USB removal and reconnection; no result was present,
+and its pending request was preserved on the host and removed from the device.
+
 
 ### Events during a host request and initial-publish retry
 
