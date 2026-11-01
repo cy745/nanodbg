@@ -89,3 +89,18 @@ loss, device-to-host application messages, session recovery, or security. The
 claim the device session first, acknowledgements are forgeable, pending data is
 one slot, and completed messages persist in the device log in cleartext. This
 protocol and the hook remain experimental and firmware-specific.
+
+`btoutboundprobe.c` and `outbound_host.py` exercise the reverse direction:
+the device reads `/Apps/Data/nanodbg-outbound.bin` (1–216 bytes), initiates
+fragmented advertising, and waits for a matching acknowledgement before the
+next fragment. In one run a 103-byte file was received and reassembled exactly
+by Windows in six fragments. The device logged six successful advertisement
+updates, all acknowledgements, no malformed reports, and successful cleanup.
+The temporary device file was removed after testing. Run the host with
+`python -m experiments.ble.outbound_host` immediately after `wait-app`.
+
+This is a separate 65-second, one-message experiment, not yet an integrated
+bidirectional service. It uses a fixed session value, cleartext unauthenticated
+broadcasts, one receive slot and no host-side persistence or recovery; the
+controller and hook coexistence caveats above still apply. Nearby senders can
+forge acknowledgements, and a disconnect or timeout aborts the experiment.
