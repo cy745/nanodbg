@@ -23,6 +23,9 @@ class HciRequestTests(unittest.TestCase):
         self.assertEqual(parsed_acl['acl_echo_hex'], '0400010009730000')
         frames = with_acl.replace(b'connection-cleanup',
             b'acl-frame 20 04 00 01 02 03 04 \nacl-dropped 00 \nconnection-cleanup')
+        tx = frames.replace(b'acl-frame', b'acl-tx 71 02 00 00 08 00 01 00 \nacl-frame')
+        self.assertEqual(parse_result(tx, request)['acl_transmissions'],
+                         [{'return': 625, 'payload_hex': '08000100'}])
         self.assertEqual(parse_result(frames, request)['acl_frames'],
                          [{'flags': 0x20, 'length': 4, 'payload_hex': '01020304', 'truncated': False}])
         with self.assertRaises(ValueError):

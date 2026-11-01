@@ -754,6 +754,36 @@ configured channel nor SDP payload transfer has yet been demonstrated. This
 shows that this host accepted an SDP connection request in the tested state,
 while RFCOMM was refused; it does not generalize to other peers or settings.
 
+### SDP query over a configured L2CAP channel
+
+An experimental `ACL_SDP_PROBE` build (also enable `ACL_L2CAP_PROBE` and set
+`L2CAP_PROBE_PSM=1`) handles this specific handshake from a timer rather than
+transmitting from the receive callback. It accepts only complete, single-frame
+signaling packets for local CID 0x00e1, a zero continuation flag, and either
+no configuration options or one MTU option. It requests default configuration,
+answers the peer's request, and after both sides' configuration steps sends an
+SDP ServiceSearchRequest for UUID 0x1000 with transaction 0x1234. It is a
+diagnostic, not a complete L2CAP/SDP stack: it does not reassemble fragments,
+handle continuation or general options, allocate a CID with the system stack,
+or synchronize the receive callback and timer. It records up to six received
+ACL frames and three subsequent outgoing payloads; drops are reported. The
+firmware send return value is not itself proof of radio delivery.
+
+On 2026-11-02 the probe connected to the same Windows adapter over unencrypted
+classic ACL. After the pending and successful connection responses, it captured
+the peer's configuration request, sent configuration request
+`080001000474040040000000` and response
+`0a00010005020600400000000000`, and received successful matching configuration
+response `0a00010005740600e10000000000`. It sent the SDP query
+`0d00400002123400083503191000000500` and received
+`0e00e1000312340009000100010000000000` on local CID 0x00e1. This is an SDP
+ServiceSearchResponse with transaction 0x1234, one returned handle (0), and no
+continuation. All three staged-send returns were 625; no capture drops were
+reported, the hook was restored and the HCI disconnect command was accepted.
+This establishes a specific SDP request/response over a configured dynamic
+channel in one run. It does not establish a general bidirectional application
+transport, delivery of arbitrary bytes, pairing, or successful RFCOMM access.
+
 
 ### Events during a host request and initial-publish retry
 

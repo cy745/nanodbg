@@ -3,6 +3,9 @@
 #include "lvgl/lvgl.h"
 #include "bt_hci.h"
 #include "h4_event.h"
+#ifdef ACL_SDP_PROBE
+#include "l2cap_sdp_probe.h"
+#endif
 
 static char report[2048];
 static int used;
@@ -25,6 +28,29 @@ typedef struct {
 } acl_segment_buffer;
 typedef int (*acl_send_t)(int type, int handle, const void *data, unsigned len);
 static int acl_started, acl_send_rc;
+#ifdef ACL_SDP_PROBE
+static l2cap_sdp_probe sdp;
+static unsigned sdp_read, sdp_ticks, sdp_tx_count;
+static struct { int rc; unsigned len; uint8_t data[20]; } sdp_tx[3];
+static void finish_connection(lv_timer_t *timer);
+static void sdp_poll(lv_timer_t *timer) {
+    while (sdp_read<inquiry_event.acl_record_count) {
+        h4_acl_record *r=&inquiry_event.acl_records[sdp_read++];
+        if ((r->flags & 0x30)==0x20 && r->length==r->saved)
+            l2cap_sdp_input(&sdp,r->data,r->saved);
+    }
+    uint8_t data[20]; unsigned n;
+    while ((n=l2cap_sdp_next(&sdp,data))!=0 && sdp_tx_count<3) {
+        acl_segment_buffer buffer={0}; buffer.remaining=buffer.size=n; buffer.data=data;
+        unsigned i=sdp_tx_count++;
+        sdp_tx[i].len=n;
+        for (unsigned j=0;j<n;j++) sdp_tx[i].data[j]=data[j];
+        sdp_tx[i].rc=((acl_send_t)(BT_HCI_SEND_STAGED | 1u))
+            (2,inquiry_event.acl_handle | 0x2000,&buffer,n);
+    }
+    if (++sdp_ticks>=30) { lv_timer_delete(timer); finish_connection(0); }
+}
+#endif
 #ifdef ACL_L2CAP_PROBE
 #ifndef L2CAP_PROBE_PSM
 #define L2CAP_PROBE_PSM 3
@@ -52,8 +78,13 @@ static void finish_connection(lv_timer_t *timer) {
         buffer.remaining=buffer.size=sizeof acl_request;
         buffer.data=acl_request;
         acl_send_rc=((acl_send_t)(BT_HCI_SEND_STAGED | 1u))(2,handle | 0x2000,&buffer,sizeof acl_request);
+#ifdef ACL_SDP_PROBE
+        lv_timer_t *wait=lv_timer_create(sdp_poll,100,0);
+        if (wait) return;
+#else
         lv_timer_t *wait=lv_timer_create(finish_connection,3000,0);
         if (wait) { lv_timer_set_repeat_count(wait,1); return; }
+#endif
     }
 #endif
     append("connection-complete ");
@@ -75,6 +106,14 @@ static void finish_connection(lv_timer_t *timer) {
         } else append("none ");
         append("\n");
 #ifdef ACL_L2CAP_PROBE
+#ifdef ACL_SDP_PROBE
+        for (unsigned i=0;i<sdp_tx_count;i++) {
+            append("acl-tx ");
+            for (unsigned j=0;j<4;j++) hexbyte(((uint32_t)sdp_tx[i].rc >> (8*j)) & 255);
+            for (unsigned j=0;j<sdp_tx[i].len;j++) hexbyte(sdp_tx[i].data[j]);
+            append("\n");
+        }
+#endif
         for (unsigned i=0;i<inquiry_event.acl_record_count;i++) {
             h4_acl_record *r=&inquiry_event.acl_records[i];
             append("acl-frame "); hexbyte(r->flags); hexbyte(r->length & 255); hexbyte(r->length >> 8);
