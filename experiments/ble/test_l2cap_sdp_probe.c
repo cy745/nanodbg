@@ -9,7 +9,11 @@ int main(void) {
     const uint8_t response[]={10,0,1,0,5,0x74,6,0,0xe1,0,0,0,0,0};
     const uint8_t config[]={8,0,1,0,4,0x74,4,0,0x40,0,0,0};
     const uint8_t answer[]={10,0,1,0,5,1,6,0,0x40,0,0,0,0,0};
+#ifdef ACL_RFCOMM_PROBE
+    const uint8_t query[]={4,0,0x40,0,3,0x3f,1,0x1c};
+#else
     const uint8_t query[]={13,0,0x40,0,2,0x12,0x34,0,8,0x35,3,0x19,0x10,0,0,5,0};
+#endif
     const uint8_t wrong_cid[]={12,0,1,0,3,0x73,8,0,0x40,0,0xe2,0,0,0,0,0};
     const uint8_t more_options[]={12,0,1,0,4,1,8,0,0xe1,0,1,0,1,2,0,4};
     const uint8_t failed_config[]={10,0,1,0,5,0x74,6,0,0xe1,0,0,0,1,0};

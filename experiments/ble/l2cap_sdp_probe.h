@@ -44,8 +44,13 @@ static unsigned l2cap_sdp_next(l2cap_sdp_probe *s, uint8_t out[20]) {
         s->peer_config_answered=1; return sizeof v;
     }
     if (s->our_config_ok && s->peer_config_answered && !s->query_sent) {
+#ifdef ACL_RFCOMM_PROBE
+        /* RFCOMM SABM, DLCI 0, command with poll bit, zero information. */
+        const uint8_t v[]={4,0,0,0,3,0x3f,1,0x1c};
+#else
         /* SDP ServiceSearchRequest: UUID 0x1000, max 5 handles, no continuation. */
         const uint8_t v[]={13,0,0,0,2,0x12,0x34,0,8,0x35,3,0x19,0x10,0,0,5,0};
+#endif
         for (unsigned i=0;i<sizeof v;i++) out[i]=v[i];
         out[2]=s->peer_cid & 255; out[3]=s->peer_cid >> 8;
         s->query_sent=1; return sizeof v;

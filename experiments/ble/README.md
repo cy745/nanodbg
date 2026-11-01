@@ -829,6 +829,37 @@ correctly prevented the RFCOMM L2CAP request. This does not establish which
 side lacked a key, or whether authenticated RFCOMM would be accepted. The
 controller error meanings are defined in the [Bluetooth Core error codes](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/architecture%2C-change-history%2C-and-conventions/controller-error-codes.html).
 
+In another run the probe sent Link Key Request Negative Reply (0x040c) from
+its timer while forwarding the original event to the firmware. Its command
+returned status 0, but authentication still completed with 0x06. Because the
+firmware may already have responded, this does not identify which response
+controlled the outcome.
+
+The opt-in `HCI_AUTH_SUPPRESS_KEY_PROBE` experiment intercepts only a complete
+nine-byte H4 Link Key Request at a packet boundary with the selected peer's
+address. Other packets, addresses, and fragmented requests are forwarded to
+the original callback. It counts suppressed requests and, only after a
+suppression, sends the negative key reply from the timer. In a 2026-11-02
+run, one request was suppressed; negative key, I/O capability and confirmation
+replies each returned status 0, followed by pairing complete and authentication
+complete status 0. With a Windows RFCOMM listener on channel 4, a PSM 3 L2CAP
+request then received a pending response and a successful response assigning
+peer CID 0x0040 to local CID 0x00e1, followed by the peer's configuration
+request. No ACL or security capture drops were reported. This establishes an
+accepted L2CAP connection after authentication, not a configured RFCOMM
+session or application-data transfer. The callback interposition is limited
+to this controlled diagnostic and does not implement key management.
+
+A follow-up `ACL_RFCOMM_PROBE` build combines that pairing path with bounded
+L2CAP configuration. On another run, authentication and the PSM 3 connection
+again succeeded. The iPod sent configuration request
+`080001000474040040000000` and answered the peer's configuration request with
+`0a00010005060600400000000000`; both staged sends returned 625. No matching
+response to the iPod's configuration request was captured in the three-second
+window, so the RFCOMM DLCI 0 SABM was not sent. There were no reported ACL
+capture drops. Longer observation and encryption-state capture are needed;
+the missing response alone does not establish its cause.
+
 
 ### Events during a host request and initial-publish retry
 

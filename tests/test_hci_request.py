@@ -22,8 +22,10 @@ class HciRequestTests(unittest.TestCase):
                          [{'event': 0x17, 'status': None}, {'event': 6, 'status': 5}])
         with self.assertRaises(ValueError):
             parse_result(auth.replace(b'auth-event 17 ff', b'auth-event 19 ff'), request)
-        replied = auth.replace(b'connection-cleanup', b'auth-reply 2b 04 00 00 0e \nauth-reply 2c 04 00 00 0e \nconnection-cleanup')
-        self.assertEqual([x['opcode'] for x in parse_result(replied, request)['auth_replies']], [0x042b, 0x042c])
+        replied = auth.replace(b'connection-cleanup', b'auth-reply 0c 04 00 00 0e \nauth-reply 2b 04 00 00 0e \nauth-reply 2c 04 00 00 0e \nconnection-cleanup')
+        self.assertEqual([x['opcode'] for x in parse_result(replied, request)['auth_replies']], [0x040c, 0x042b, 0x042c])
+        suppressed = replied.replace(b'auth-reply 0c', b'auth-key-suppressed 01 \nauth-reply 0c')
+        self.assertEqual(parse_result(suppressed, request)['auth_key_suppressed'], 1)
         with self.assertRaises(ValueError):
             parse_result(replied.replace(b'2c 04', b'2b 04'), request)
         with_acl = raw.replace(b'connection-cleanup',

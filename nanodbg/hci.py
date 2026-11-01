@@ -33,6 +33,7 @@ def parse_result(raw, request):
             r'(?:inquiry-dropped ([0-9a-f]{2}) \r?\n)?)?'
             r'(?:connection-complete (none |(?:[0-9a-f]{2} ){11})hook (restored|changed)\r?\n'
             r'(?:auth-request ((?:[0-9a-f]{2} ){3})\r?\n((?:auth-event (?:[0-9a-f]{2} ){2}\r?\n)*)auth-dropped ([0-9a-f]{2}) \r?\n)?'
+            r'(?:auth-key-suppressed ([0-9a-f]{2}) \r?\n)?'
             r'((?:auth-reply (?:[0-9a-f]{2} ){5}\r?\n)*)'
             r'(?:acl-send ((?:[0-9a-f]{2} ){4})seen ([0-9a-f]{2}) echo (none |(?:[0-9a-f]{2} )+)\r?\n)?'
             r'((?:acl-tx (?:[0-9a-f]{2} ){4}(?:[0-9a-f]{2} )+\r?\n)*)'
@@ -41,7 +42,7 @@ def parse_result(raw, request):
         if not match:
             raise ValueError('malformed HCI result')
         (nonce, opcode, params, rc, status, event, data, inquiry, hook, records, dropped,
-         connection, connection_hook, auth_request, auth_events, auth_dropped, auth_reply_lines,
+         connection, connection_hook, auth_request, auth_events, auth_dropped, auth_suppressed, auth_reply_lines,
          acl_send, acl_seen, acl_echo, acl_tx, acl_frames, acl_dropped, cleanup) = match.groups()
         if (bytes.fromhex(nonce) != request[4:8] or bytes.fromhex(opcode) != request[8:10]
                 or bytes.fromhex(params) != request[11:]):
@@ -84,11 +85,11 @@ def parse_result(raw, request):
         for line in (auth_reply_lines or '').splitlines():
             fields = bytes.fromhex(line.removeprefix('auth-reply '))
             op = int.from_bytes(fields[:2], 'little')
-            if op not in (0x042b, 0x042c) or any(item['opcode'] == op for item in auth_replies):
+            if op not in (0x040c, 0x042b, 0x042c) or any(item['opcode'] == op for item in auth_replies):
                 raise ValueError('unexpected authentication reply')
             auth_replies.append({'opcode': op, 'rc': fields[2]-256 if fields[2] >= 128 else fields[2],
                                  'controller_status': fields[3], 'event': fields[4]})
-        if auth_replies and not auth:
+        if (auth_replies or auth_suppressed is not None) and not auth:
             raise ValueError('authentication replies without request')
         transmissions = []
         for line in (acl_tx or '').splitlines():
@@ -138,6 +139,7 @@ def parse_result(raw, request):
                                  'controller_status': auth[1], 'event': auth[2]} if auth else None,
                 'auth_events': security_events,
                 'auth_replies': auth_replies,
+                'auth_key_suppressed': int(auth_suppressed, 16) if auth_suppressed is not None else None,
                 'auth_dropped': int(auth_dropped, 16) if auth_dropped is not None else None,
                 'acl_send_return': int.from_bytes(bytes.fromhex(acl_send), 'little', signed=True) if acl_send else None,
                 'acl_packets_seen': int(acl_seen, 16) if acl_seen else None,

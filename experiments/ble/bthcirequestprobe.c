@@ -21,16 +21,28 @@ static int auth_started, auth_rc;
 static uint8_t auth_status, auth_event;
 #ifdef HCI_AUTH_REPLY_PROBE
 static unsigned auth_read, auth_ticks, auth_reply_count;
-static struct { uint16_t opcode; uint8_t rc, status, event; } auth_replies[2];
+static struct { uint16_t opcode; uint8_t rc, status, event; } auth_replies[3];
+#ifdef HCI_AUTH_SUPPRESS_KEY_PROBE
+static volatile unsigned auth_key_suppressed;
+#endif
 static void finish_connection(lv_timer_t *timer);
 static void auth_poll(lv_timer_t *timer) {
     while (auth_read < inquiry_event.security_count) {
         uint8_t code=inquiry_event.security_records[auth_read++].code;
         uint16_t op=code==0x31 ? 0x042b : (code==0x33 ? 0x042c : 0);
-        if (!op || auth_reply_count>=2) continue;
+#ifdef HCI_AUTH_NEGATIVE_KEY_PROBE
+        if (code==0x17) op=0x040c;
+#ifdef HCI_AUTH_SUPPRESS_KEY_PROBE
+        if (op==0x040c && !auth_key_suppressed) op=0;
+#endif
+#endif
+        if (!op || auth_reply_count>=3) continue;
         /* Confirm only if this probe successfully selected NoInputNoOutput. */
-        if (op==0x042c && !(auth_reply_count && auth_replies[0].opcode==0x042b &&
-                            auth_replies[0].rc==0 && auth_replies[0].status==0)) continue;
+        int io_selected=0;
+        for (unsigned i=0;i<auth_reply_count;i++)
+            if (auth_replies[i].opcode==0x042b && auth_replies[i].rc==0 && auth_replies[i].status==0)
+                io_selected=1;
+        if (op==0x042c && !io_selected) continue;
         int duplicate=0;
         for (unsigned i=0;i<auth_reply_count;i++) if (auth_replies[i].opcode==op) duplicate=1;
         if (duplicate) continue;
@@ -92,7 +104,18 @@ static const uint8_t acl_request[]={12,0,1,0,8,0x73,8,0,'N','A','N','O','A','C',
 #endif
 #endif
 static int inquiry_hook(uint8_t *buf, uint16_t len) {
+#ifdef HCI_AUTH_SUPPRESS_KEY_PROBE
+    int suppress=0;
+    if (buf && inquiry_event.security_capture && !inquiry_event.type && len==9 &&
+        buf[0]==4 && buf[1]==0x17 && buf[2]==6) {
+        suppress=1;
+        for (unsigned i=0;i<6;i++) if (buf[3+i]!=connection_address[i]) suppress=0;
+    }
+#endif
     if (buf) h4_event_feed(&inquiry_event,buf,len);
+#ifdef HCI_AUTH_SUPPRESS_KEY_PROBE
+    if (suppress) { auth_key_suppressed++; return 0; }
+#endif
     return original_rx ? original_rx(buf,len) : 0;
 }
 static void save(void) { hb_fs_write("/Apps/Data/hci-result.txt",report,used+1); }
@@ -162,6 +185,9 @@ static void finish_connection(lv_timer_t *timer) {
             hexbyte(inquiry_event.security_records[i].status); append("\n");
         }
         append("auth-dropped "); hexbyte(inquiry_event.security_dropped>255 ? 255 : inquiry_event.security_dropped); append("\n");
+#ifdef HCI_AUTH_SUPPRESS_KEY_PROBE
+        append("auth-key-suppressed "); hexbyte(auth_key_suppressed>255 ? 255 : auth_key_suppressed); append("\n");
+#endif
 #ifdef HCI_AUTH_REPLY_PROBE
         for (unsigned i=0;i<auth_reply_count;i++) {
             append("auth-reply "); hexbyte(auth_replies[i].opcode & 255); hexbyte(auth_replies[i].opcode >> 8);
