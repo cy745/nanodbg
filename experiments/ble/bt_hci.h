@@ -66,6 +66,12 @@ int bt_hci_cmd(uint16_t opcode, const void *params, uint8_t plen,
 int bt_hci_cmd_status(uint16_t opcode, const void *params, uint8_t plen,
                       uint8_t *out, int outmax, int *outlen, uint8_t *status);
 
+/* Accept either immediate response. A successful Command Status only means
+ * the operation started; its later completion is not captured by this API. */
+int bt_hci_cmd_ack(uint16_t opcode, const void *params, uint8_t plen,
+                   uint8_t *out, int outmax, int *outlen, uint8_t *status,
+                   uint8_t *response_event);
+
 /* 便捷封装 */
 int bt_read_bd_addr(uint8_t addr[6]);
 int bt_read_local_name(char name[248]);

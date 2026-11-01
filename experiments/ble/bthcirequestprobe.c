@@ -10,7 +10,7 @@ static void hexbyte(unsigned b) { const char *h="0123456789abcdef"; char s[4]={h
 
 static void run(lv_timer_t *timer) {
     (void)timer;
-    uint8_t request[267], out[251], status=0xff;
+    uint8_t request[267], out[251], status=0xff, response_event=0;
     uint32_t n=hb_fs_read("/Apps/Data/hci-request.bin",request,sizeof request);
     if (!n) return; /* No request: leave any existing result untouched. */
     append("hci-request-v1\n");
@@ -22,8 +22,9 @@ static void run(lv_timer_t *timer) {
         append("nonce "); for (int i=4;i<8;i++) hexbyte(request[i]);
         append("opcode "); hexbyte(request[8]); hexbyte(request[9]);
         append("params "); for (unsigned i=0;i<request[10];i++) hexbyte(request[11+i]); append("\n");
-        int rc=bt_hci_cmd_status(opcode,request+11,request[10],out,sizeof out,&outlen,&status);
+        int rc=bt_hci_cmd_ack(opcode,request+11,request[10],out,sizeof out,&outlen,&status,&response_event);
         append("rc "); hexbyte(rc & 255); append("status "); hexbyte(status);
+        append("event "); hexbyte(response_event);
         append("data "); for (int i=0;i<outlen;i++) hexbyte(out[i]); append("\n");
     }
     hb_fs_write("/Apps/Data/hci-result.txt",report,used+1);

@@ -5,7 +5,7 @@
 /* One serialized H4 byte stream. Read result fields only after found != 0. */
 typedef struct {
     uint16_t opcode;
-    uint8_t type, header[4], event[255], status;
+    uint8_t type, header[4], event[255], status, response_event, accept_status;
     unsigned header_used, header_size, remaining, event_used, result_length;
     volatile int found;
 } h4_complete_parser;

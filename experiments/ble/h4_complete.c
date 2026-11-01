@@ -2,7 +2,8 @@
 
 void h4_complete_init(h4_complete_parser *p, uint16_t opcode) {
     p->opcode=opcode; p->type=0; p->header_used=0; p->header_size=0;
-    p->remaining=0; p->event_used=0; p->result_length=0; p->status=0xff; p->found=0;
+    p->remaining=0; p->event_used=0; p->result_length=0; p->status=0xff;
+    p->response_event=0; p->accept_status=0; p->found=0;
 }
 
 static void finish(h4_complete_parser *p) {
@@ -10,6 +11,12 @@ static void finish(h4_complete_parser *p) {
     if (!p->found && p->type==4 && p->header[0]==0x0e && p->event_used>=4 &&
         (unsigned)(p->event[1] | (p->event[2]<<8))==p->opcode) {
         p->status=p->event[3]; p->result_length=p->event_used-4;
+        p->response_event=0x0e;
+        p->found=1;
+    } else if (!p->found && p->accept_status && p->type==4 &&
+               p->header[0]==0x0f && p->event_used==4 &&
+               (unsigned)(p->event[2] | (p->event[3]<<8))==p->opcode) {
+        p->status=p->event[0]; p->result_length=0; p->response_event=0x0f;
         p->found=1;
     }
     p->type=0;

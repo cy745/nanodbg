@@ -17,8 +17,12 @@ Complete, including when a frame spans receive callbacks. This prevents a
 complete-looking sequence inside an intact unrelated frame from being treated
 as a response. The parser assumes its input starts at a frame boundary; the
 temporary hook can in principle be installed mid-frame, and malformed or lost
-transport bytes can prevent synchronization. Command Status events and
-asynchronous command completion are not handled by this API.
+transport bytes can prevent synchronization. The existing `bt_hci_cmd_status`
+API waits for Command Complete only. The separate `bt_hci_cmd_ack` API can
+also return on a matching Command Status; that response does not capture the
+later asynchronous completion event.
+See the [Bluetooth HCI functional specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host-controller-interface/host-controller-interface-functional-specification.html)
+for the response and event definitions.
 
 On 2026-11-02 the parser was exercised on the iPod with concurrent scanning
 and advertising. A 40-byte request, reversed response and original-data echo
@@ -44,7 +48,10 @@ The command checks that the installed executable matches `--probe-file` and
 that autostart selects it. It refuses pre-existing request or result files,
 verifies the request after a fresh mount, reboots, checks the result against
 the request nonce, opcode and parameters, then removes both files. Its JSON
-includes the signed `rc` and `controller_status`; a successful CLI run does
+includes the signed `rc`, `controller_status` and `response_event` (14 for
+Command Complete, 15 for Command Status, 0 if no response; older probes
+produce null). A zero status in Command Status indicates acceptance, not
+completion of the underlying operation. A successful CLI run does
 not imply the controller accepted the HCI command. `--timeout` controls the
 wait for the probe surface. A failure can leave files on the device: inspect
 them before retrying or rebooting, because a surviving request can execute
@@ -67,7 +74,7 @@ This is a file-driven, one-command-per-launch experiment, not a live HCI
 debugger. **The request executes again on every launch while the file remains
 present**; remove the request and restore the normal app after testing. Commands
 can change shared controller state, and this probe does not undo those changes.
-Commands that complete through Command Status or later events are unsupported.
+The probe does not capture later asynchronous completion events.
 The controller, shared hook, timeout and parser synchronization limits above
 apply. The automated host workflow currently supports Windows only.
 
@@ -78,6 +85,11 @@ result nonces and parameter bytes matched their request files. After the tests
 the request and result files were removed and the baseline app was restored.
 The same two commands were subsequently exercised through `hci-request` on
 Windows, including verified transfer, reboot, matching results and cleanup.
+With the acknowledgement-aware probe, an Inquiry (`0x0401`, parameters
+`338b9e0000`) returned response event `0x0f`, rc 0 and controller status 0.
+The probe did not record whether the inquiry later completed. The iPod was
+rebooted after this test. A subsequent LE Set Scan Parameters request returned
+event `0x0e`, rc 0 and status 0 with the same probe.
 
 `btscanprobe.c` scans briefly and stores the first matching payload from a
 manufacturer advertisement with company field `ffff` and prefix `NDBG` in

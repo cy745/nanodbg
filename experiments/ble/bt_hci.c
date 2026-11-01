@@ -47,10 +47,12 @@ bool bt_is_on(void)
     return ((*(volatile uint32_t *)(obj + BT_SLOT_SEND) & ~1u) != BT_STUB_SEND);
 }
 
-int bt_hci_cmd_status(uint16_t opcode, const void *params, uint8_t plen,
-                      uint8_t *out, int outmax, int *outlen, uint8_t *status)
+static int command(uint16_t opcode, const void *params, uint8_t plen,
+                   uint8_t *out, int outmax, int *outlen, uint8_t *status,
+                   uint8_t *response_event, int accept_status)
 {
     if (status) *status = 0xff;
+    if (response_event) *response_event = 0;
     if (outlen)
         *outlen = 0;
     if (plen && !params)
@@ -67,6 +69,7 @@ int bt_hci_cmd_status(uint16_t opcode, const void *params, uint8_t plen,
     if (!s_orig_rx)
         return BT_ERR_NO_TRANSPORT;
     h4_complete_init(&s_parser, opcode);
+    s_parser.accept_status = accept_status;
     s_armed = 1;
     s_slot = obj + BT_SLOT_RX;
     *(volatile uint32_t *)s_slot = (uint32_t)&hook_rx | 1u;
@@ -93,6 +96,7 @@ int bt_hci_cmd_status(uint16_t opcode, const void *params, uint8_t plen,
 
     if (!s_parser.found)
         return BT_ERR_TIMEOUT;
+    if (response_event) *response_event = s_parser.response_event;
     if (status) *status = s_parser.status;
     if (s_parser.status)
         return BT_ERR_STATUS;
@@ -105,6 +109,19 @@ int bt_hci_cmd_status(uint16_t opcode, const void *params, uint8_t plen,
             *outlen = n;
     }
     return BT_OK;
+}
+
+int bt_hci_cmd_status(uint16_t opcode, const void *params, uint8_t plen,
+                      uint8_t *out, int outmax, int *outlen, uint8_t *status)
+{
+    return command(opcode, params, plen, out, outmax, outlen, status, 0, 0);
+}
+
+int bt_hci_cmd_ack(uint16_t opcode, const void *params, uint8_t plen,
+                   uint8_t *out, int outmax, int *outlen, uint8_t *status,
+                   uint8_t *response_event)
+{
+    return command(opcode, params, plen, out, outmax, outlen, status, response_event, 1);
 }
 
 int bt_hci_cmd(uint16_t opcode, const void *params, uint8_t plen,

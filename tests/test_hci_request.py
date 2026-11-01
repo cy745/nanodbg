@@ -23,6 +23,9 @@ class HciRequestTests(unittest.TestCase):
                b'rc fc status 12 data \n\0')
         result = parse_result(raw, request)
         self.assertEqual((result['rc'], result['controller_status']), (-4, 0x12))
+        self.assertIsNone(result['response_event'])
+        with_event = raw.replace(b'status 12 data', b'status 12 event 0f data')
+        self.assertEqual(parse_result(with_event, request)['response_event'], 0x0f)
         with self.assertRaises(ValueError):
             parse_result(raw, encode_request(0x1405, b'\xff\x0f', b'xxxx'))
         with self.assertRaises(ValueError):
