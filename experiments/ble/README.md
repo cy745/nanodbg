@@ -69,3 +69,23 @@ confirmation, although the deployed files had passed remount verification and
 nanodbg could still query the device. A separate `nanodbg reboot` then observed
 USB removal/return and `wait-app` confirmed the baseline surface. The intermittent
 first-attempt failure remains unexplained; automatic recovery is not guaranteed.
+
+`btframedprobe.c` and `framed_host.py` test a single stop-and-wait session
+using a two-byte random session tag, one-byte sequence and fragment count, and
+up to 18 message bytes per fragment. Deploy the probe, run `wait-app`, then
+immediately run `python -m experiments.ble.framed_host HEXDATA` from the repo
+root on Windows. One device run sent 96 bytes (`00` through `5f`) in six
+fragments: all six echoes matched; the device reported six accepted fragments,
+15 duplicates, no malformed frames, and a reassembled byte sequence verified
+against the original. The first host acknowledgement was deliberately delayed
+while its advertisement kept repeating. Controller update and cleanup statuses
+were all zero.
+
+This is still a bounded 65-second, one-message prototype, max 216 bytes. The
+host repeats each advertisement until its echo or a 15-second timeout; a timeout
+aborts rather than starting a new retry attempt. It does not prove delivery under
+loss, device-to-host application messages, session recovery, or security. The
+16-bit session tag is not authentication and can collide. Another advertiser can
+claim the device session first, acknowledgements are forgeable, pending data is
+one slot, and completed messages persist in the device log in cleartext. This
+protocol and the hook remain experimental and firmware-specific.
