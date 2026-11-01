@@ -19,6 +19,32 @@ static int connection_accepted;
 #ifdef HCI_AUTH_PROBE
 static int auth_started, auth_rc;
 static uint8_t auth_status, auth_event;
+#ifdef HCI_AUTH_REPLY_PROBE
+static unsigned auth_read, auth_ticks, auth_reply_count;
+static struct { uint16_t opcode; uint8_t rc, status, event; } auth_replies[2];
+static void finish_connection(lv_timer_t *timer);
+static void auth_poll(lv_timer_t *timer) {
+    while (auth_read < inquiry_event.security_count) {
+        uint8_t code=inquiry_event.security_records[auth_read++].code;
+        uint16_t op=code==0x31 ? 0x042b : (code==0x33 ? 0x042c : 0);
+        if (!op || auth_reply_count>=2) continue;
+        /* Confirm only if this probe successfully selected NoInputNoOutput. */
+        if (op==0x042c && !(auth_reply_count && auth_replies[0].opcode==0x042b &&
+                            auth_replies[0].rc==0 && auth_replies[0].status==0)) continue;
+        int duplicate=0;
+        for (unsigned i=0;i<auth_reply_count;i++) if (auth_replies[i].opcode==op) duplicate=1;
+        if (duplicate) continue;
+        uint8_t params[9], out[16], status=0xff, event=0; int outlen=0;
+        for (unsigned i=0;i<6;i++) params[i]=connection_address[i];
+        params[6]=3; params[7]=0; params[8]=0; /* no I/O, no OOB, no MITM/bonding */
+        int rc=bt_hci_cmd_ack(op,params,op==0x042b ? 9 : 6,out,sizeof out,&outlen,&status,&event);
+        unsigned i=auth_reply_count++;
+        auth_replies[i].opcode=op; auth_replies[i].rc=rc & 255;
+        auth_replies[i].status=status; auth_replies[i].event=event;
+    }
+    if (++auth_ticks>=50) { lv_timer_delete(timer); finish_connection(0); }
+}
+#endif
 #endif
 #if defined(ACL_ECHO_PROBE) || defined(ACL_L2CAP_PROBE)
 typedef struct {
@@ -82,12 +108,24 @@ static void finish_connection(lv_timer_t *timer) {
         inquiry_event.security_capture=1;
         auth_status=0xff; auth_event=0;
         auth_rc=bt_hci_cmd_ack(0x0411,params,2,out,sizeof out,&outlen,&auth_status,&auth_event);
+#ifdef HCI_AUTH_REPLY_PROBE
+        lv_timer_t *wait=lv_timer_create(auth_poll,100,0);
+        if (wait) return;
+#else
         lv_timer_t *wait=lv_timer_create(finish_connection,5000,0);
         if (wait) { lv_timer_set_repeat_count(wait,1); return; }
+#endif
     }
 #endif
 #if defined(ACL_ECHO_PROBE) || defined(ACL_L2CAP_PROBE)
     if (!acl_started && connection_accepted && inquiry_event.found && inquiry_event.data[0]==0) {
+#ifdef HCI_AUTH_REQUIRE_SUCCESS
+        int authenticated=0;
+        for (unsigned i=0;i<inquiry_event.security_count;i++)
+            if (inquiry_event.security_records[i].code==0x06 && inquiry_event.security_records[i].status==0)
+                authenticated=1;
+        if (authenticated) {
+#endif
         acl_started=1;
         uint16_t handle=(inquiry_event.data[1] | ((uint16_t)inquiry_event.data[2]<<8)) & 0x0fff;
         inquiry_event.acl_handle=handle;
@@ -102,6 +140,9 @@ static void finish_connection(lv_timer_t *timer) {
 #else
         lv_timer_t *wait=lv_timer_create(finish_connection,3000,0);
         if (wait) { lv_timer_set_repeat_count(wait,1); return; }
+#endif
+#ifdef HCI_AUTH_REQUIRE_SUCCESS
+        }
 #endif
     }
 #endif
@@ -121,6 +162,12 @@ static void finish_connection(lv_timer_t *timer) {
             hexbyte(inquiry_event.security_records[i].status); append("\n");
         }
         append("auth-dropped "); hexbyte(inquiry_event.security_dropped>255 ? 255 : inquiry_event.security_dropped); append("\n");
+#ifdef HCI_AUTH_REPLY_PROBE
+        for (unsigned i=0;i<auth_reply_count;i++) {
+            append("auth-reply "); hexbyte(auth_replies[i].opcode & 255); hexbyte(auth_replies[i].opcode >> 8);
+            hexbyte(auth_replies[i].rc); hexbyte(auth_replies[i].status); hexbyte(auth_replies[i].event); append("\n");
+        }
+#endif
     }
 #endif
 #if defined(ACL_ECHO_PROBE) || defined(ACL_L2CAP_PROBE)

@@ -804,6 +804,31 @@ and does not establish the cause of the earlier RFCOMM refusal. A previous
 attempt could not confirm USB removal and reconnection; no result was present,
 and its pending request was preserved on the host and removed from the device.
 
+An experimental `HCI_AUTH_REPLY_PROBE` build additionally responds, from a
+timer and only for the selected peer, to I/O Capability Request with
+NoInputNoOutput, no OOB data and no bonding or MITM requirement. It responds
+to User Confirmation Request only if its own I/O reply was accepted. The
+original event callback remains active, so its responses may race the probe;
+this is an experiment, not a general pairing implementation. No keys or
+numeric confirmation values are written to the report. The Bluetooth Core
+specification describes these HCI commands and the automatic confirmation
+used with no input and no output: [HCI functional specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host-controller-interface/host-controller-interface-functional-specification.html).
+
+In a 2026-11-02 run against the same Windows adapter, both the I/O capability
+and confirmation replies returned status 0. Captured events included I/O
+Capability Response, User Confirmation Request, Simple Pairing Complete status
+0, Link Key Notification, and Authentication Complete status 0; no events
+were reported dropped. This establishes one successful authentication on
+that ACL connection, not persistent bonding or an encrypted data channel.
+
+A subsequent run enabled `ACL_L2CAP_PROBE` with
+`HCI_AUTH_REQUIRE_SUCCESS`, and kept a Windows RFCOMM listener open. The peer
+connection succeeded, but after Link Key Request the Authentication Complete
+status was 0x06 (PIN or Key Missing). No probe reply was sent, and the guard
+correctly prevented the RFCOMM L2CAP request. This does not establish which
+side lacked a key, or whether authenticated RFCOMM would be accepted. The
+controller error meanings are defined in the [Bluetooth Core error codes](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-61/out/en/architecture%2C-change-history%2C-and-conventions/controller-error-codes.html).
+
 
 ### Events during a host request and initial-publish retry
 
