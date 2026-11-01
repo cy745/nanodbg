@@ -199,3 +199,24 @@ those two device-side computations, not arbitrary application-originated
 messages or an indefinitely running transport. The Windows host currently
 uses WinRT advertising; the other recovery, security and cleanup caveats
 continue to apply.
+
+
+`btnoticeprobe.c` and `notice_host.py` add device-originated notices to the
+dynamic response diagnostic. At startup the device advertises `b0`, the
+completed-round count and a little-endian 32-bit LVGL tick. Two seconds
+after completing each exchange it publishes another notice if still idle.
+The host listens for each notice and checks its round count before continuing.
+Run `python -m experiments.ble.notice_host HEX [HEX ...]` with the notice
+probe installed; start the host soon after `wait-app` reports the app.
+
+In one hardware run the host received the first notice before starting any
+BLE advertisement, then received notices after each of two completed
+requests. The device log matched all three notice payloads and recorded
+hook restoration and successful scan and advertisement stop statuses.
+The startup notice is unsolicited; the later notices follow completion of
+exchanges. They have no acknowledgement, buffering, identity verification or
+delivery guarantee and share one advertisement slot with responses. Timing
+can overwrite a response acknowledgement if a host is delayed. Tick values
+are local device counters, not wall-clock times. This does not yet provide a
+reliable, general device-originated message channel. The other limitations
+of the recovery and dynamic probes still apply.
