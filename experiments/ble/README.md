@@ -11,6 +11,21 @@ not part of the resident debugger.
 firmware-specific staging object. No concurrent HCI caller is safe: the firmware
 staging area and hook are shared with the system stack. Controller completion
 status, not the firmware send return value, determines command success.
+Build `h4_complete.c` alongside `bt_hci.c`. Its streaming parser recognizes
+H4 event, ACL, SCO and ISO frame lengths before looking for a matching Command
+Complete, including when a frame spans receive callbacks. This prevents a
+complete-looking sequence inside an intact unrelated frame from being treated
+as a response. The parser assumes its input starts at a frame boundary; the
+temporary hook can in principle be installed mid-frame, and malformed or lost
+transport bytes can prevent synchronization. Command Status events and
+asynchronous command completion are not handled by this API.
+
+On 2026-11-02 the parser was exercised on the iPod with concurrent scanning
+and advertising. A 40-byte request, reversed response and original-data echo
+matched; the log recorded successful HCI updates and scan/advertising cleanup.
+Native C tests cover a split completion, an embedded false match, unmatched and
+short completions, a 520-byte ACL packet and a nonzero controller status. The
+hardware run does not prove correct behavior for all traffic or concurrency.
 
 `btscanprobe.c` scans briefly and stores the first matching payload from a
 manufacturer advertisement with company field `ffff` and prefix `NDBG` in

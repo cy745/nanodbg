@@ -2,6 +2,7 @@
  * bt_hci.c — 同步 HCI 命令实现
  */
 #include "bt_hci.h"
+#include "h4_complete.h"
 
 typedef int (*hci_send_t)(int type, int opcode, int len);
 typedef int (*hci_send_staged_t)(int type, int opcode, const void *params, unsigned len);
@@ -22,15 +23,12 @@ typedef struct {
 static rx_feed_t    s_orig_rx;
 static volatile uint32_t s_slot;
 static volatile int s_armed;
-static volatile int s_len;
-static uint8_t      s_cap[512];
+static h4_complete_parser s_parser;
 
 static int hook_rx(uint8_t *buf, uint16_t len)
 {
     if (s_armed && buf) {
-        int n = (int)len;
-        for (int i = 0; i < n && s_len < (int)sizeof s_cap; i++)
-            s_cap[s_len++] = buf[i];
+        h4_complete_feed(&s_parser, buf, len);
     }
     return s_orig_rx ? s_orig_rx(buf, len) : 0;
 }
@@ -47,33 +45,6 @@ bool bt_is_on(void)
     if (obj < 0x08000000u || obj >= 0x0A000000u)
         return false;
     return ((*(volatile uint32_t *)(obj + BT_SLOT_SEND) & ~1u) != BT_STUB_SEND);
-}
-
-/* 在截获缓冲里找 Command Complete（0x04 0x0E ... opcode 匹配）。
- * 返回 1 = 找到，*payload 和 *plen 指向参数区（status 之后）。 */
-static int find_cc(uint16_t opcode, uint8_t **payload, int *plen, uint8_t *status)
-{
-    int n = s_len;
-    for (int i = 0; i + 5 < n; i++) {
-        if (s_cap[i] != 0x04 || s_cap[i + 1] != 0x0E)
-            continue;
-        int pl = s_cap[i + 2];
-        if (i + 3 + pl > n)
-            continue;
-        int op = s_cap[i + 4] | (s_cap[i + 5] << 8);
-        if (op != opcode)
-            continue;
-        /* 参数: [ncmd][op_lo][op_hi][status][data...] */
-        uint8_t *p = &s_cap[i + 6];
-        int remain = (i + 3 + pl) - (i + 6);
-        if (remain < 1)
-            return 0;
-        if (status) *status = p[0];
-        *payload = p + 1;          /* 跳过 status */
-        *plen = remain - 1;
-        return (p[0] == 0) ? 1 : -1;   /* 1=成功, -1=状态非0 */
-    }
-    return 0;
 }
 
 int bt_hci_cmd_status(uint16_t opcode, const void *params, uint8_t plen,
@@ -95,7 +66,7 @@ int bt_hci_cmd_status(uint16_t opcode, const void *params, uint8_t plen,
     s_orig_rx = (rx_feed_t)(*(volatile uint32_t *)(obj + BT_SLOT_RX));
     if (!s_orig_rx)
         return BT_ERR_NO_TRANSPORT;
-    s_len = 0;
+    h4_complete_init(&s_parser, opcode);
     s_armed = 1;
     s_slot = obj + BT_SLOT_RX;
     *(volatile uint32_t *)s_slot = (uint32_t)&hook_rx | 1u;
@@ -112,27 +83,24 @@ int bt_hci_cmd_status(uint16_t opcode, const void *params, uint8_t plen,
     (void)rc;
 
     /* 3) 轮询等待响应（约 300 ms 上限） */
-    uint8_t *payload = 0;
-    int plen_out = 0;
-    int found = 0;
-    for (int spin = 0; spin < 3000 && !found; spin++) {
+    for (int spin = 0; spin < 3000 && !s_parser.found; spin++) {
         busy_wait(3000);
-        found = find_cc(opcode, &payload, &plen_out, status);
     }
 
     /* 4) 恢复原指针 */
     s_armed = 0;
     *(volatile uint32_t *)s_slot = (uint32_t)s_orig_rx;
 
-    if (found == 0)
+    if (!s_parser.found)
         return BT_ERR_TIMEOUT;
-    if (found < 0)
+    if (status) *status = s_parser.status;
+    if (s_parser.status)
         return BT_ERR_STATUS;
 
     if (out && outmax > 0) {
-        int n = plen_out < outmax ? plen_out : outmax;
+        int n = (int)s_parser.result_length < outmax ? (int)s_parser.result_length : outmax;
         for (int i = 0; i < n; i++)
-            out[i] = payload[i];
+            out[i] = s_parser.event[i+4];
         if (outlen)
             *outlen = n;
     }
