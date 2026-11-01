@@ -146,3 +146,20 @@ response is a file loaded once at startup, a stalled session cannot be reset,
 the protocol has no authentication or integrity and its short session tags can
 collide. The cleanup marker records a pointer write, not proof that firmware
 callbacks have quiesced. Do not switch apps or mount media before cleanup.
+
+`btrecoveryprobe.c` and `recovery_host.py` add an experimental session reset.
+The host diagnostic intentionally sends only the first fragment of a two-part
+request, sends a new reset token, and then executes the hexadecimal requests
+passed on the command line. On one iPod run, the device log recorded reset in
+receive state after one accepted fragment, followed by two byte-exact new
+requests, responses, and successful explicit cleanup. Duplicate reset tokens
+are ignored by the device, though the delayed-duplicate case has not yet been
+verified on hardware. Use the same outbound file and launch instructions as
+`service_host.py`; invoke `python -m experiments.ble.recovery_host HEX [HEX ...]`.
+
+Reset is unauthenticated, discards the active message, and is not automatic on
+host timeout. This test covers abandoning an incoming message, not interruption
+while the device is transmitting, host process crashes, radio reconnection,
+or reliable exactly-once delivery. A reset token uses only two bytes and can
+collide with an earlier token. The prior hook lifetime and cleanup limitations
+also apply.
