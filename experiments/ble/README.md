@@ -734,6 +734,26 @@ be inferred from that command. The host radio was restored to its prior state.
 The next experiment should investigate authentication/pairing and a registered
 host RFCOMM listener; a successful channel and payload exchange remain unproven.
 
+The same probe can be compiled with `L2CAP_PROBE_PSM=1` to request SDP instead.
+On a second run with PSM 3, a Windows RFCOMM socket was bound and listening on
+channel 4, without explicitly setting an authentication option or registering
+the service in SDP. The peer again returned pending followed by security refusal;
+this does not establish whether SDP registration or pairing would change it.
+The listener is implemented in `windows_rfcomm_listener.py` and does not by
+itself implement the device side of RFCOMM. See the Microsoft documentation on
+[Bluetooth bind](https://learn.microsoft.com/en-us/windows/win32/bluetooth/bluetooth-and-bind)
+and [socket security options](https://learn.microsoft.com/en-us/windows/win32/bluetooth/bluetooth-and-socket-options).
+
+In a separate PSM 1 run, the same unpaired Windows adapter returned a pending
+response, then success with destination CID 0x0040 and source CID 0x00e1:
+`0c000100037308004000e10000000000`. It then sent Configuration Request
+`0c00010004010800e100000001020004`, requesting MTU 1024. The ACL connection
+was unencrypted, no ACL records were dropped, the hook was restored and the
+disconnect command was accepted. Configuration was not answered; neither a
+configured channel nor SDP payload transfer has yet been demonstrated. This
+shows that this host accepted an SDP connection request in the tested state,
+while RFCOMM was refused; it does not generalize to other peers or settings.
+
 
 ### Events during a host request and initial-publish retry
 

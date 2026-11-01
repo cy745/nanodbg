@@ -26,7 +26,11 @@ typedef struct {
 typedef int (*acl_send_t)(int type, int handle, const void *data, unsigned len);
 static int acl_started, acl_send_rc;
 #ifdef ACL_L2CAP_PROBE
-static const uint8_t acl_request[]={8,0,1,0,2,0x73,4,0,3,0,0xe1,0};
+#ifndef L2CAP_PROBE_PSM
+#define L2CAP_PROBE_PSM 3
+#endif
+static const uint8_t acl_request[]={8,0,1,0,2,0x73,4,0,
+    L2CAP_PROBE_PSM & 255,(L2CAP_PROBE_PSM >> 8) & 255,0xe1,0};
 #else
 static const uint8_t acl_request[]={12,0,1,0,8,0x73,8,0,'N','A','N','O','A','C','L','!'};
 #endif
