@@ -33,11 +33,16 @@ instrumented device already attached:
 ```sh
 python -m nanodbg devices
 python -m nanodbg status
+python -m nanodbg boot-status
 python -m nanodbg screenshot screen.bmp
 python -m nanodbg tap 120 200
 python -m nanodbg home
 python -m nanodbg reboot
 ```
+
+`boot-status` reads the resident boot record: registration completion indicates
+that its registration step ran, and launch fields describe recorded launches
+since boot, not necessarily the current foreground application.
 
 The last two commands currently work only on Windows. Device permissions and
 drivers depend on the host. With suitable local Python packaging tools, the

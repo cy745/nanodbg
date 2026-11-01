@@ -8,6 +8,12 @@ class TransportError(RuntimeError):
     pass
 
 
+def nano7_usb_ids(multisz):
+    """Select nano 7 parent IDs, excluding USB interface children."""
+    return [s for s in multisz.split('\0')
+            if s.upper().startswith('USB\\VID_05AC&PID_1267\\')]
+
+
 if sys.platform == 'win32':
     from ctypes import wintypes as W
 
@@ -30,6 +36,29 @@ if sys.platform == 'win32':
     k.DeviceIoControl.restype = W.BOOL
     k.CloseHandle.argtypes = [W.HANDLE]
     k.GetLogicalDrives.restype = W.DWORD
+    cfg = C.WinDLL('cfgmgr32')
+    cfg.CM_Get_Device_ID_List_SizeW.argtypes = [C.POINTER(W.ULONG), W.LPCWSTR, W.ULONG]
+    cfg.CM_Get_Device_ID_List_SizeW.restype = W.ULONG
+    cfg.CM_Get_Device_ID_ListW.argtypes = [W.LPCWSTR, C.POINTER(C.c_wchar), W.ULONG, W.ULONG]
+    cfg.CM_Get_Device_ID_ListW.restype = W.ULONG
+
+    def usb_ipod_instances():
+        """Read present USB PnP IDs without enumerating or opening volumes."""
+        # Filter by the USB enumerator, and exclude not-present devices.
+        flags = 0x001 | 0x100  # CM_GETIDLIST_FILTER_ENUMERATOR | FILTER_PRESENT
+        for _ in range(4):
+            size = W.ULONG()
+            rc = cfg.CM_Get_Device_ID_List_SizeW(C.byref(size), 'USB', flags)
+            if rc:
+                raise TransportError(f'USB PnP enumeration failed: CONFIGRET 0x{rc:x}')
+            buf = C.create_unicode_buffer(size.value)
+            rc = cfg.CM_Get_Device_ID_ListW('USB', buf, size.value, flags)
+            if rc == 0x1a:  # CR_BUFFER_SMALL if devices changed between calls
+                continue
+            if rc:
+                raise TransportError(f'USB PnP enumeration failed: CONFIGRET 0x{rc:x}')
+            return nano7_usb_ids(''.join(buf[:]))
+        raise TransportError('USB PnP enumeration repeatedly changed')
 
     def ioctl(handle, code, inp=None, out=None):
         done = W.DWORD()

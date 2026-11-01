@@ -22,6 +22,18 @@ class Debugger:
     def read(self, address):
         return self.transport.command(bytes([0xc6, 0x96, 2]) + address.to_bytes(4, 'big') + bytes(3), 512)
 
+    def boot_report(self):
+        boot = self.read(REPORT)
+        if struct.unpack_from('<I', boot, 0x2c)[0] != 0x32505452:
+            raise TransportError('Boot report magic mismatch')
+        offsets = {'resident_started': 0x50, 'registration_completed': 0x54,
+                   'app_count': 0x58, 'preloaded_count': 0x5c,
+                   'failure_mask': 0x60, 'launch_recorded': 0x64,
+                   'launched_app_id': 0x68, 'launched_app_kind': 0x6c,
+                   'launch_entry': 0x70, 'launch_count': 0xa8}
+        return {name: struct.unpack_from('<I', boot, offset)[0]
+                for name, offset in offsets.items()}
+
     def report(self):
         boot = self.read(REPORT)
         if struct.unpack_from('<I', boot, 0x2c)[0] != 0x32505452:
@@ -112,33 +124,50 @@ def windows_disk(transport):
 
 def windows_reboot(transport, path):
     # Establish a removal observation before triggering the panic reboot.
-    selected = [d for d in discover() if d['path'].lower() == path.lower()]
-    if len(selected) != 1 or not selected[0].get('serial'):
+    from .transport import describe, usb_ipod_instances
+    selected = discover()
+    if (len(selected) != 1 or selected[0]['path'].lower() != path.lower()
+            or not selected[0].get('serial')):
         raise TransportError('Cannot uniquely identify the iPod for reconnect monitoring')
     serial = selected[0]['serial']
+    usb_devices = usb_ipod_instances()
+    if len(usb_devices) != 1:
+        raise TransportError('Expected exactly one nano 7 USB device for reconnect monitoring')
+    usb_id = usb_devices[0].upper()
     windows_home(transport)
     gone = threading.Event()
+    monitoring = threading.Event()
     stop = threading.Event()
     def monitor():
         while not stop.is_set():
             try:
-                if not any(d.get('serial') == serial for d in discover()): gone.set()
-            except OSError:
+                present = usb_id in (item.upper() for item in usb_ipod_instances())
+                if present:
+                    monitoring.set()
+                elif monitoring.is_set():
+                    gone.set()
+            except (OSError, TransportError):
                 pass
             stop.wait(.2)
     thread = threading.Thread(target=monitor, daemon=True)
     thread.start()
     try:
+        if not monitoring.wait(5):
+            raise TransportError('Could not establish USB presence monitoring before reboot')
         # This intentionally triggers the existing experimental panic reboot.
         transport.command(bytes.fromhex('c696a70842d444000000'), allow_check=True)
         transport.close()
         deadline = time.monotonic() + 70
         while time.monotonic() < deadline:
-            if gone.is_set():
-                matches = [d for d in discover() if d.get('serial') == serial]
-                if len(matches) == 1:
+            if gone.is_set() and usb_id in (item.upper() for item in usb_ipod_instances()):
+                try:
+                    info = describe(path)
+                    matches = info and info.get('serial') == serial
+                except OSError:
+                    matches = False
+                if matches:
                     try:
-                        reconnected = open_transport(matches[0]['path'])
+                        reconnected = open_transport(path)
                         try:
                             Debugger(reconnected)
                             windows_home(reconnected)
@@ -162,6 +191,7 @@ def main():
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('devices')
     sub.add_parser('status')
+    sub.add_parser('boot-status', help='read resident boot and app registration report')
     wait_app = sub.add_parser('wait-app', help='wait for a visible homebrew surface')
     wait_app.add_argument('--timeout', type=float, default=45)
     sub.add_parser('home', help='flush/dismount the Windows volume and request the Home screen')
@@ -213,6 +243,8 @@ def main():
             state = debugger.report()
             state.pop('touch_fn', None)
             print(json.dumps(state, indent=2))
+        elif args.command == 'boot-status':
+            print(json.dumps(debugger.boot_report(), indent=2))
         elif args.command == 'wait-app':
             if args.timeout <= 0: raise TransportError('timeout must be positive')
             deadline = time.monotonic() + args.timeout
