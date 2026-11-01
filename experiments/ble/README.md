@@ -293,3 +293,31 @@ not persist data or recover automatically across host/device restart. The
 first-fragment repeat test does not establish recovery from loss of later
 ACKs, radio disconnects, or a missing final confirmation. Other hook and
 platform limitations described above still apply.
+
+
+`nano_ble_outbox.h` and `nano_ble_outbox.c` extract the experimental
+device-originated fragmentation into a small C interface. Initialize it with
+a transport publish callback, then call `nano_ble_outbox_send` with an ID
+and 1–216 bytes; pass matching ACK packets to `nano_ble_outbox_ack`. It copies
+the payload and allows one pending message. The caller must serialize access,
+provide an available advertising transport, and handle scheduling, readiness,
+shutdown, and transport failures. `btoutboxprobe.c` demonstrates integration;
+`outbox_host.py` runs the corresponding host diagnostic.
+
+In one successful hardware run the application sent device-generated 5-, 40-,
+and 100-byte payloads (1, 3, and 6 fragments), and the host reassembled and
+checked them along with two request/response exchanges. The device recorded
+all three acknowledgements, hook restoration, and successful HCI stop
+statuses. The first run failed after receipt of the 5-byte message because
+the host test still checked 40 bytes; it was fixed and the device rebooted
+before the successful run. `test_outbox.c` additionally exercises 1, 19, 20
+and 216-byte boundaries, invalid input, busy state, mismatched ACKs, copying,
+and simulated publish failures on a host compiler.
+
+Only 5, 40 and 100 bytes were exercised on hardware. This API remains an
+experimental building block, not a standalone reliable transport: the
+publish callback controls the shared advertising slot, the demo callback
+checks command return values but does not treat nonzero controller status as
+failure, ACKs and short IDs are unauthenticated, and the caller must maintain
+object lifetime until completion. It has no queue, timeout policy, durable
+recovery, concurrency protection, or automatic hook lifecycle management.
