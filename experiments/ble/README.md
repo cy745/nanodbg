@@ -46,3 +46,26 @@ reports, and a concurrently running Windows scanner received 16 copies of the
 device's `ND-SIM-2026` advertisement. This demonstrates both directions during
 the same enabled interval, not reliable delivery or connection support. The
 same RX hook lifetime restriction applies; run only on the matching firmware.
+
+`btstreamprobe.c` and `stream_host.py` exercise four sequential distinct
+requests in one launch while scanning and advertising stay enabled. The host
+uses the first byte as a test sequence and waits for an exact echoed payload
+before the next request. On one Windows/iPod run all four echoed successfully;
+the device logged four successful `LE Set Advertising Data` completions while
+scanning was enabled, zero malformed reports, and successful scan and
+advertising cleanup. Run `python -m experiments.ble.stream_host` from the
+repository root immediately after `wait-app` with this probe deployed.
+
+This is a bounded 42-second diagnostic, not a general transport: there is one
+pending receive slot, no retry, session identifier, peer authentication,
+fragmentation, or delivery guarantee. The receive hook is shared with the
+firmware; the command helper chains its temporary hook through the probe hook.
+Hook replacement and the pending slot have not been stress-tested for races or
+coexistence with the system Bluetooth stack. The app must remain active through
+cleanup. Cleartext manufacturer advertisements are visible to nearby devices.
+
+Restoring the baseline app after this run again timed out during deploy's reboot
+confirmation, although the deployed files had passed remount verification and
+nanodbg could still query the device. A separate `nanodbg reboot` then observed
+USB removal/return and `wait-app` confirmed the baseline surface. The intermittent
+first-attempt failure remains unexplained; automatic recovery is not guaranteed.
