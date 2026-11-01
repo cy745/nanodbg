@@ -105,10 +105,17 @@ static void schedule_pump(void) {
 static void tap_event(lv_event_t *event) {
     int button=(int)(uintptr_t)lv_event_get_user_data(event);
     if (!service_ready || stopping || tap_count>=127) { append("tap unavailable\n"); return; }
-    uint8_t data[6]; uint32_t tick=lv_tick_get();
+    uint32_t tick=lv_tick_get();
+#ifdef QUEUE_VARIABLE_DATA
+    /* Device-generated binary data across many fragments. */
+    uint8_t data[216]; int length=button==1 ? 40 : 216;
+    for (int i=6;i<length;i++) data[i]=(uint8_t)(tick+i*37+button*11);
+#else
+    uint8_t data[6]; int length=sizeof data;
+#endif
     for (int i=0;i<4;i++) data[i]=(tick>>(8*i))&255;
     data[4]=button; data[5]=tap_count+1;
-    if (!nano_ble_queue_push(&tap_queue,0x80+tap_count,data,sizeof data)) {
+    if (!nano_ble_queue_push(&tap_queue,0x80+tap_count,data,length)) {
         tap_count++; append("tap queued button "); hexbyte(button); append("count "); hexbyte(tap_count);
         append("depth "); hexbyte(tap_queue.count); append("\n");
         if (!outbox.pending && !notice_timer) pump(0);

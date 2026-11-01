@@ -446,6 +446,24 @@ and acknowledged shutdown. The device log is the separate evidence of hook and
 controller cleanup. This is serialized notice handling, not simultaneous radio
 transmissions or an authenticated, persistent stream.
 
+#### Variable-length device-originated data
+
+Build `btqueueprobe.c` with `QUEUE_VARIABLE_DATA=1` (alongside `bt_hci.c`,
+`nano_ble_outbox.c` and `nano_ble_queue.c`) to make buttons A and B enqueue
+40 and 216 bytes respectively. The first four bytes are the device tick in
+little-endian order, followed by the button and event counter. The rest is
+generated on the device from the tick, byte offset and button. Without the
+define, the original six-byte touch messages are unchanged.
+
+On 2026-11-02 `python -m experiments.ble.queue_variable_host` injected both
+button presses and independently checked every byte, then completed a 40-byte
+host request and clean shutdown. The 216-byte notice used 12 outbox fragments
+and included both `00` and `ff`; the device log recorded four completed
+notices including startup and echo, no dropped touches, an empty queue, hook
+restoration and successful scan and advertising disable commands. This
+verifies the queue's maximum message size on this device, but the generated
+data is still a diagnostic payload rather than a general application API.
+
 `nano_ble_queue.[ch]` adds a four-entry FIFO of copied messages, each at most
 216 bytes, and `test_queue.c` checks bounds, full and empty behavior, copying,
 ordering and ring wrap. The caller must serialize queue access.
