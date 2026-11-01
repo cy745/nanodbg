@@ -181,3 +181,21 @@ that experiment and is not a delivery guarantee. Only the most recent reset
 token is remembered: an older token from before a subsequent reset can still
 interrupt a session. The security, collision, cleanup and concurrency limits
 above still apply.
+
+
+`btdynamicprobe.c` and `dynamic_host.py` exercise a device-generated
+response without an outbound file. After receiving each complete request,
+the iPod reverses its bytes in memory and transmits that result; the host
+verifies the result before starting the next request. Run
+`python -m experiments.ble.dynamic_host HEX [HEX ...]` with the dynamic probe
+installed. Messages are still restricted to 1–216 bytes, and this is a
+bounded diagnostic rather than an interactive application API.
+
+One hardware run sent a 37-byte and a 7-byte request; the device recorded
+both, and the host received the byte-reversed replies in three and one
+fragments respectively. It requested shutdown, and the device recorded hook
+restoration and successful scan and advertising stop statuses. This proves
+those two device-side computations, not arbitrary application-originated
+messages or an indefinitely running transport. The Windows host currently
+uses WinRT advertising; the other recovery, security and cleanup caveats
+continue to apply.
