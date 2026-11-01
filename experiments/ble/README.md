@@ -220,3 +220,28 @@ can overwrite a response acknowledgement if a host is delayed. Tick values
 are local device counters, not wall-clock times. This does not yet provide a
 reliable, general device-originated message channel. The other limitations
 of the recovery and dynamic probes still apply.
+
+
+`btnoticeackprobe.c` and `notice_ack_host.py` add a bounded acknowledgement
+experiment. The device keeps advertising the same `b0` notice and ignores
+other incoming commands until it receives `b1` with the same five-byte
+notice identifier. It then advertises `b2` with that identifier and accepts
+the next request. Run `python -m experiments.ble.notice_ack_host HEX [HEX ...]`
+with the corresponding probe installed. The host deliberately delays the
+first acknowledgement for three seconds.
+
+In one device run, the host observed five additional copies during that
+delay, then observed confirmation and completed two requests. Three notice
+confirmations appeared on both host and device; the device also recorded
+shutdown, hook restoration, and successful scan and advertising stop statuses.
+The fixed-size device log was truncated after the notice acknowledgement count,
+so its trailing summary fields were unavailable for that run.
+
+This is still a one-slot diagnostic, not a reliable general queue: the
+notice can replace a response-completion advertisement after two seconds,
+there is no authentication or durable state, and an absent host blocks other
+commands until the 120-second watchdog. Notice identity can collide after
+counter wrap or reboot. Observation of repeated advertisements and one
+acknowledgement does not prove recovery from lost confirmations, process
+restarts, or arbitrary radio loss. Existing hook and platform limitations
+remain.
