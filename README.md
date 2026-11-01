@@ -144,8 +144,8 @@ probe and is sequential; it does not implement arbitrary simultaneous traffic.
 With `btqueueprobe.c` deployed, `python -m nanodbg ble interactive --probe
 queued` also handles queued touch notices that contend with a host request or
 shutdown. It acknowledges each notice, prints a `device_notice` event and
-resumes the interrupted operation. Notices are serviced only while a request
-or shutdown is running, not while the command waits for input. This diagnostic
+resumes the interrupted operation. It also receives and confirms notices while
+waiting for terminal input. This diagnostic
 uses notice IDs 128–254, leaving at most 127 request rounds per boot; its
 bounded queue can drop events, and the watchdog and broadcast limitations
 above still apply.

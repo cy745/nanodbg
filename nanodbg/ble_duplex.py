@@ -6,6 +6,7 @@ import asyncio
 import json
 import secrets
 import sys
+import threading
 
 from .ble import COMPANY_ID, advertise, parse_payload
 
@@ -73,18 +74,34 @@ class DuplexClient:
         if not self.queue_notices:
             return await self.radio.exchange(data, accept)
         def wanted(packet):
-            return accept(packet) or (len(packet) >= 5 and packet[0] == 0xb0
-                                      and 0x80 <= packet[1] <= 0xfe
-                                      and packet[2] == 0
-                                      and packet[1] not in self.notices_received)
+            return accept(packet) or self._is_new_notice(packet)
         while True:
             packet = await self.radio.exchange(data, wanted)
             if accept(packet):
                 return packet
-            number = packet[1]
-            payload = await self._notice(number, packet)
-            self.notices_received.add(number)
-            self.captured_notices.append((number, payload))
+            await self._capture_notice(packet)
+
+    def _is_new_notice(self, packet):
+        return (len(packet) >= 5 and packet[0] == 0xb0
+                and 0x80 <= packet[1] <= 0xfe and packet[2] == 0
+                and packet[1] not in self.notices_received)
+
+    async def _capture_notice(self, packet):
+        number = packet[1]
+        payload = await self._notice(number, packet)
+        self.notices_received.add(number)
+        self.captured_notices.append((number, payload))
+
+    async def capture_idle_notice(self, packet):
+        if not self.queue_notices or self.state != 'ready' or not self._is_new_notice(packet):
+            raise ValueError('invalid idle notice or session state')
+        self.state = 'busy'
+        try:
+            await self._capture_notice(packet)
+            self.state = 'ready'
+        except BaseException:
+            self.state = 'failed'
+            raise
 
     def pop_notices(self):
         notices, self.captured_notices = self.captured_notices, []
@@ -222,6 +239,52 @@ class DuplexClient:
             raise
 
 
+def _readline_future():
+    """Read stdin without preventing interpreter exit if radio monitoring fails."""
+    loop = asyncio.get_running_loop()
+    future = loop.create_future()
+    def read():
+        try:
+            value, error = sys.stdin.readline(), None
+        except Exception as exc:
+            value, error = None, exc
+        def deliver():
+            if not future.done():
+                if error is None:
+                    future.set_result(value)
+                else:
+                    future.set_exception(error)
+        try:
+            loop.call_soon_threadsafe(deliver)
+        except RuntimeError:
+            pass  # The event loop has already closed.
+    threading.Thread(target=read, daemon=True).start()
+    return future
+
+
+async def _queued_input(client, input_task, print_notices):
+    """Wait for input while serially acknowledging notices; never race radio readers."""
+    while True:
+        receive_task = asyncio.create_task(client.radio.receive(client._is_new_notice))
+        try:
+            done, _ = await asyncio.wait((input_task, receive_task),
+                                         return_when=asyncio.FIRST_COMPLETED)
+            if receive_task in done:
+                try:
+                    packet = receive_task.result()
+                except TimeoutError:
+                    pass
+                else:
+                    await client.capture_idle_notice(packet)
+                    print_notices()
+            if input_task in done:
+                return input_task.result()
+        finally:
+            if not receive_task.done():
+                receive_task.cancel()
+            await asyncio.gather(receive_task, return_exceptions=True)
+
+
 async def interactive(timeout, probe="runtime"):
     if timeout <= 0:
         raise ValueError('timeout must be positive')
@@ -242,7 +305,9 @@ async def interactive(timeout, probe="runtime"):
             while True:
                 if sys.stdin.isatty():
                     print('hex payload (or quit)> ', end='', file=sys.stderr, flush=True)
-                line = await asyncio.to_thread(sys.stdin.readline)
+                input_task = _readline_future()
+                line = (await _queued_input(client, input_task, print_notices)
+                        if probe == 'queued' else await input_task)
                 if not line or line.strip().lower() == 'quit':
                     break
                 try:

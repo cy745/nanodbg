@@ -425,8 +425,9 @@ The queued interactive client now recognizes an unsolicited first fragment
 while waiting for a request or shutdown response. It acknowledges the entire
 notice and retries the interrupted command, retaining the notice for the
 caller. IDs 0x80–0xfe are reserved for events and request rounds are limited
-to 127 to avoid collision with the request echo IDs. It does not receive while
-waiting for terminal input, and the probe still has a finite watchdog and a
+to 127 to avoid collision with the request echo IDs. While waiting for terminal
+input, it receives notices and completes their acknowledgments before acting on
+any simultaneous input. The probe still has a finite watchdog and a
 bounded, nonpersistent queue.
 
 On 2026-11-02 `python -m experiments.ble.queue_contention_host` injected two
@@ -436,6 +437,14 @@ echo. The device log recorded both notices acknowledged before the request,
 zero dropped events, an empty queue, restored hook and controller shutdown.
 This demonstrates arbitration for this specific probe, not a general BLE
 connection or protection against spoofing or packet loss.
+
+On 2026-11-02 `python -m experiments.ble.queue_idle_host` started the queued
+CLI in a separate process, left its stdin idle, and injected two touches. Both
+notifications were printed and acknowledged before any input was sent. The
+same CLI then completed a 40-byte request, verified the reverse reply and echo,
+and acknowledged shutdown. The device log is the separate evidence of hook and
+controller cleanup. This is serialized notice handling, not simultaneous radio
+transmissions or an authenticated, persistent stream.
 
 `nano_ble_queue.[ch]` adds a four-entry FIFO of copied messages, each at most
 216 bytes, and `test_queue.c` checks bounds, full and empty behavior, copying,

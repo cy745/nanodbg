@@ -1,5 +1,8 @@
+import asyncio
+import subprocess
+import sys
 import unittest
-from nanodbg.ble_duplex import DuplexClient
+from nanodbg.ble_duplex import DuplexClient, _queued_input
 
 
 class FakeRadio:
@@ -116,6 +119,63 @@ class ContentionRadio(FakeRadio):
 
 
 class DuplexTests(unittest.IsolatedAsyncioTestCase):
+    async def test_blocked_stdin_does_not_prevent_process_exit(self):
+        program = ("import asyncio; from nanodbg.ble_duplex import _readline_future\n"
+                   "async def main():\n _readline_future(); await asyncio.sleep(.1)\n"
+                   "asyncio.run(main())\n")
+        process = subprocess.Popen([sys.executable, '-c', program], stdin=subprocess.PIPE,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                                   creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        try:
+            result = await asyncio.to_thread(process.wait, 3)
+            self.assertEqual(result, 0, process.stderr.read().decode(errors='replace'))
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+            process.stdin.close()
+            process.stderr.close()
+
+    async def test_idle_notice_finishes_before_pending_input(self):
+        class IdleRadio(FakeRadio):
+            def __init__(self):
+                super().__init__()
+                self.incoming = asyncio.Queue()
+                self.ack_started = asyncio.Event()
+                self.ack_continue = asyncio.Event()
+
+            async def receive(self, accept):
+                while True:
+                    packet = await asyncio.wait_for(self.incoming.get(), 0.01)
+                    if accept(packet):
+                        return packet
+
+            async def exchange(self, data, accept):
+                if data[:2] == b'\xb1\x80':
+                    self.ack_started.set()
+                    await self.ack_continue.wait()
+                    packet = b'\xb2\x80\x01'
+                    assert accept(packet)
+                    return packet
+                return await super().exchange(data, accept)
+
+        radio = IdleRadio()
+        client = DuplexClient(radio, queue_notices=True)
+        client.state = 'ready'
+        line = asyncio.get_running_loop().create_future()
+        notices = []
+        worker = asyncio.create_task(_queued_input(client, line, lambda: notices.extend(client.pop_notices())))
+        await asyncio.sleep(0.03)  # receive timeouts must not terminate idle monitoring
+        await radio.incoming.put(b'\xb0\x80\x00\x01hello')
+        await asyncio.wait_for(radio.ack_started.wait(), 1)
+        line.set_result('abcd\n')
+        await asyncio.sleep(0)
+        self.assertFalse(worker.done())
+        radio.ack_continue.set()
+        self.assertEqual(await worker, 'abcd\n')
+        self.assertEqual(notices, [(0x80, b'hello')])
+        self.assertEqual(client.state, 'ready')
+
     async def test_queued_notices_interrupt_and_resume_request(self):
         radio = ContentionRadio()
         client = DuplexClient(radio, queue_notices=True)
