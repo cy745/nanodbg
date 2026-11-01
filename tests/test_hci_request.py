@@ -1,5 +1,6 @@
 import unittest
 from experiments.ble.hci_request import encode_request
+from nanodbg.hci import parse_result
 
 
 class HciRequestTests(unittest.TestCase):
@@ -15,6 +16,17 @@ class HciRequestTests(unittest.TestCase):
             with self.subTest(opcode=opcode, length=len(data), nonce=nonce):
                 with self.assertRaises(ValueError):
                     encode_request(opcode, data, nonce)
+
+    def test_result_requires_matching_request_and_complete_record(self):
+        request = encode_request(0x1405, b'\xff\x0f', b'abcd')
+        raw = (b'hci-request-v1\nnonce 61 62 63 64 opcode 05 14 params ff 0f \n'
+               b'rc fc status 12 data \n\0')
+        result = parse_result(raw, request)
+        self.assertEqual((result['rc'], result['controller_status']), (-4, 0x12))
+        with self.assertRaises(ValueError):
+            parse_result(raw, encode_request(0x1405, b'\xff\x0f', b'xxxx'))
+        with self.assertRaises(ValueError):
+            parse_result(raw[:-3], request)
 
 
 if __name__ == '__main__':

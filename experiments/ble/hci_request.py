@@ -2,12 +2,7 @@
 import argparse
 import secrets
 from pathlib import Path
-
-
-def encode_request(opcode, params, nonce):
-    if not 0 <= opcode <= 0xffff or len(params) > 255 or len(nonce) != 4:
-        raise ValueError('invalid opcode, parameter length, or nonce')
-    return b'HCP1' + nonce + opcode.to_bytes(2, 'little') + bytes((len(params),)) + params
+from nanodbg.hci import encode_request
 
 
 def main():

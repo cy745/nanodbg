@@ -1,6 +1,8 @@
 """Native iPod nano debugger: python -m nanodbg --help."""
 import argparse
 import json
+import os
+import secrets
 import struct
 import sys
 import time
@@ -116,7 +118,18 @@ def windows_disk(transport):
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         if transport.media_present():
-            if changed: transport.reopen()
+            if changed:
+                # Release the pre-mount volume handle so Windows can mount it.
+                transport.close()
+                while time.monotonic() < deadline:
+                    try:
+                        transport.reopen()
+                        return
+                    except OSError as exc:
+                        if getattr(exc, 'winerror', None) != 21:
+                            raise
+                        time.sleep(.2)
+                raise TransportError('iPod volume handle did not become available')
             return
         time.sleep(.2)
     raise TransportError('iPod media did not become available')
@@ -185,6 +198,84 @@ def windows_reboot(transport, path):
         thread.join(timeout=2)
 
 
+def windows_hci_request(transport, path, debugger, probe_file, opcode, params, timeout):
+    """Run one request with the exact already-installed probe; leave evidence on failure."""
+    from .hci import encode_request, parse_result
+    if not (len(path)==6 and path.startswith('\\\\.\\') and path[4].isalpha() and path[5]==':'):
+        raise TransportError('HCI probe requires a Windows drive-letter volume')
+    if timeout <= 0:
+        raise TransportError('timeout must be positive')
+    request = encode_request(opcode, params, secrets.token_bytes(4))
+    probe = Path(probe_file).read_bytes()
+    root = Path(path[4:] + '\\') / 'Apps'
+    request_path = root / 'Data' / 'hci-request.bin'
+    result_path = root / 'Data' / 'hci-result.txt'
+
+    def mounted(operation):
+        windows_disk(transport)
+        transport.close()
+        try:
+            deadline = time.monotonic() + 20
+            while True:
+                try:
+                    # Media presence can precede filesystem readiness on Windows.
+                    with (root / 'Executables' / 'BTRawProbe.hbapp').open('rb') as f:
+                        f.read(1)
+                    if (root / 'Data').is_dir():
+                        break
+                except OSError as exc:
+                    if getattr(exc, 'winerror', None) not in (2, 3, 21):
+                        raise
+                if time.monotonic() >= deadline:
+                    raise TransportError('Apps/Data did not become available')
+                time.sleep(.25)
+            return operation()
+        finally:
+            transport.reopen()
+            windows_home(transport)
+
+    def write_request():
+        if ((root / 'Executables' / 'BTRawProbe.hbapp').read_bytes() != probe or
+                (root / 'Startup' / 'autolaunch').read_bytes().strip() != b'BTRawProbe'):
+            raise TransportError('Installed probe or autostart differs from supplied probe')
+        if request_path.exists() or result_path.exists():
+            raise TransportError('Existing HCI request/result preserved; inspect them before retrying')
+        with request_path.open('xb') as f:
+            f.write(request); f.flush(); os.fsync(f.fileno())
+        if request_path.read_bytes() != request:
+            raise TransportError('HCI request failed immediate verification')
+
+    def verify_request():
+        if request_path.read_bytes() != request:
+            raise TransportError('HCI request failed fresh-mount verification')
+
+    def read_and_cleanup():
+        result = parse_result(result_path.read_bytes(), request)
+        if request_path.read_bytes() != request:
+            raise TransportError('HCI request changed; preserving device files')
+        request_path.unlink()
+        result_path.unlink()
+        return result
+
+    try:
+        mounted(write_request)
+        mounted(verify_request)
+        print(f'HCI request {request[4:8].hex()} verified; rebooting', file=sys.stderr, flush=True)
+        windows_reboot(transport, path)
+        transport.reopen()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if debugger.report()['app_visible']:
+                break
+            time.sleep(.25)
+        else:
+            raise TransportError('HCI probe surface did not become visible')
+        time.sleep(8)  # The probe runs once, five seconds after its entry point.
+        return mounted(read_and_cleanup)
+    except (OSError, TransportError, ValueError) as exc:
+        raise TransportError(f'{exc}; request/result may remain and replay on reboot; inspect before retrying') from exc
+
+
 def main():
     parser = argparse.ArgumentParser(description='Native iPod nano 7 USB debugger (experimental firmware)')
     parser.add_argument('--device', help='explicit device path; default: detect a single Apple iPod')
@@ -209,6 +300,11 @@ def main():
     tap = sub.add_parser('tap')
     tap.add_argument('x', type=int)
     tap.add_argument('y', type=int)
+    hci = sub.add_parser('hci-request', help='run one request using an already-installed experimental HCI probe (Windows)')
+    hci.add_argument('opcode', help='hexadecimal HCI opcode')
+    hci.add_argument('params', help='hexadecimal parameter bytes; use an empty string for none')
+    hci.add_argument('--probe-file', required=True, help='exact installed BTRawProbe.hbapp to verify')
+    hci.add_argument('--timeout', type=float, default=90, help='seconds to wait for probe surface after reboot')
     ble = sub.add_parser('ble', help='experimental short BLE advertisement tests')
     ble_sub = ble.add_subparsers(dest='ble_command', required=True)
     for action in ('scan', 'advertise'):
@@ -326,6 +422,12 @@ def main():
         elif args.command == 'tap':
             debugger.tap(args.x, args.y)
             print(f'Homebrew touch injected at {args.x},{args.y}')
+        elif args.command == 'hci-request':
+            if sys.platform != 'win32':
+                raise TransportError('hci-request is currently implemented on Windows only')
+            result = windows_hci_request(transport, path, debugger, args.probe_file,
+                                         int(args.opcode, 16), bytes.fromhex(args.params), args.timeout)
+            print(json.dumps(result))
     finally:
         transport.close()
 

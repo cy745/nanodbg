@@ -33,7 +33,24 @@ hardware run does not prove correct behavior for all traffic or concurrency.
 `/Apps/Data/hci-request.bin` and writes `/Apps/Data/hci-result.txt` after its
 five-second startup delay. Build it as BTRawProbe alongside `bt_hci.c` and
 `h4_complete.c`; this repository still does not package the NanoApps SDK build.
-From the repository root, prepare a request on the host:
+On Windows, after deploying this probe and setting it as the autostart app,
+run a request from the repository root:
+
+```sh
+python -m nanodbg hci-request 200b 00600030000000 --probe-file path/to/BTRawProbe.hbapp
+```
+
+The command checks that the installed executable matches `--probe-file` and
+that autostart selects it. It refuses pre-existing request or result files,
+verifies the request after a fresh mount, reboots, checks the result against
+the request nonce, opcode and parameters, then removes both files. Its JSON
+includes the signed `rc` and `controller_status`; a successful CLI run does
+not imply the controller accepted the HCI command. `--timeout` controls the
+wait for the probe surface. A failure can leave files on the device: inspect
+them before retrying or rebooting, because a surviving request can execute
+again. Do not automatically retry an uncertain command.
+
+For manual experiments, prepare a request on the host:
 
 ```sh
 python -m experiments.ble.hci_request 200b 00600030000000 hci-request.bin
@@ -52,13 +69,15 @@ present**; remove the request and restore the normal app after testing. Commands
 can change shared controller state, and this probe does not undo those changes.
 Commands that complete through Command Status or later events are unsupported.
 The controller, shared hook, timeout and parser synchronization limits above
-apply. Result writing and request transfer are not yet automated by nanodbg.
+apply. The automated host workflow currently supports Windows only.
 
 On 2026-11-02 two separately prepared requests were tested on one iPod: LE Set
 Scan Parameters (`0x200b`, `00600030000000`) returned rc `00`, status `00`;
 `0x1405` with parameters `ff0f` returned rc `fc` (-4), status `12`. Both
 result nonces and parameter bytes matched their request files. After the tests
 the request and result files were removed and the baseline app was restored.
+The same two commands were subsequently exercised through `hci-request` on
+Windows, including verified transfer, reboot, matching results and cleanup.
 
 `btscanprobe.c` scans briefly and stores the first matching payload from a
 manufacturer advertisement with company field `ffff` and prefix `NDBG` in

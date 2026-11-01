@@ -12,6 +12,7 @@ static void run(lv_timer_t *timer) {
     (void)timer;
     uint8_t request[267], out[251], status=0xff;
     uint32_t n=hb_fs_read("/Apps/Data/hci-request.bin",request,sizeof request);
+    if (!n) return; /* No request: leave any existing result untouched. */
     append("hci-request-v1\n");
     if (n<11 || n>266 || request[0]!='H' || request[1]!='C' || request[2]!='P' || request[3]!='1' || n!=11u+request[10]) {
         append("invalid request\n");
