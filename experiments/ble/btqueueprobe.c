@@ -3,10 +3,16 @@
 #include "bt_hci.h"
 #include "nano_ble_outbox.h"
 #include "nano_ble_messages.h"
+#include "nano_ble_inbox.h"
 static uint8_t frame[260], payload[26], last[26];
 static volatile int pending; static int last_len, updates;
-static uint8_t message[217], incoming[216], session[2];
-static int msg_len, next_seq, total, duplicates, complete, rx_len, rx_seq, rx_total, state, rounds;
+static uint8_t message[217]; static nano_ble_inbox inbox;
+#define incoming inbox.data
+#define session inbox.session
+#define rx_len inbox.length
+#define rx_seq inbox.next
+#define rx_total inbox.total
+static int msg_len, next_seq, total, duplicates, complete, state, rounds;
 static lv_timer_t *poll_timer, *deadline_timer, *notice_timer; static int stopping, reset_seen, late_reset_duplicates; static uint8_t reset_tag[2];
 static nano_ble_outbox outbox; static int notice_acks, notice_sent_round;
 static void finish(lv_timer_t *t);
@@ -167,7 +173,7 @@ static void update(lv_timer_t *t) {
             if (!publish(ack,3)) {
                 reset_seen=1; reset_tag[0]=payload[1]; reset_tag[1]=payload[2];
                 append("reset state "); hexbyte(state); append("received "); hexbyte(rx_seq); append("\n");
-                state=0; rx_len=rx_seq=rx_total=next_seq=0;
+                state=0; nano_ble_inbox_reset(&inbox); next_seq=0;
             }
         } else if (state==1 && rx_seq>0) late_reset_duplicates++;
         pending=0; return;
@@ -176,12 +182,11 @@ static void update(lv_timer_t *t) {
     if (len >= 6 && payload[0]==0xa1 && payload[4]>0 && payload[4]<=12 && payload[3]<payload[4] && len<=23) {
         int seq=payload[3];
         if ((state==0 || state==3) && seq==0 && (state==0 || payload[1]!=session[0] || payload[2]!=session[1])) {
-            session[0]=payload[1]; session[1]=payload[2]; rx_total=payload[4]; rx_seq=rx_len=0; state=1;
+            nano_ble_inbox_begin(&inbox,payload+1,payload[4]); state=1;
         }
         if (state==1 && payload[1]==session[0] && payload[2]==session[1] && payload[4]==rx_total) {
-            if (seq==rx_seq && rx_len+len-5 <= (int)sizeof incoming) {
-                if (!publish(payload,len)) { for (int i=5;i<len;i++) incoming[rx_len++]=payload[i]; rx_seq++; }
-            } else if (seq<rx_seq) duplicates++;
+            int rc=nano_ble_inbox_accept(&inbox,payload,len,publish);
+            if (rc==NANO_INBOX_DUPLICATE) duplicates++;
         }
     } else if (len==3 && payload[0]==0xa4 && payload[1]==session[0] && payload[2]==session[1] && state==1 && rx_seq==rx_total) {
         msg_len=rx_len; total=(msg_len+17)/18;

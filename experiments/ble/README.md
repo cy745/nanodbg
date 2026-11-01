@@ -449,7 +449,8 @@ transmissions or an authenticated, persistent stream.
 #### Variable-length device-originated data
 
 Build `btqueueprobe.c` with `QUEUE_VARIABLE_DATA=1` (alongside `bt_hci.c`,
-`nano_ble_outbox.c`, `nano_ble_queue.c` and `nano_ble_messages.c`) to make buttons A and B enqueue
+`nano_ble_outbox.c`, `nano_ble_queue.c`, `nano_ble_messages.c` and
+`nano_ble_inbox.c`) to make buttons A and B enqueue
 40 and 216 bytes respectively. The first four bytes are the device tick in
 little-endian order, followed by the button and event counter. The rest is
 generated on the device from the tick, byte offset and button. Without the
@@ -485,6 +486,29 @@ cover copy semantics, capacity, retry, busy outbox and ID exhaustion. This is
 an application-facing queue helper, not a complete standalone Bluetooth stack:
 the application still owns radio setup, the receive hook, arbitration, timers,
 ACK handling and cleanup. It remains an unauthenticated experimental protocol.
+
+#### Reusable device-side request reassembly
+
+`nano_ble_inbox.[ch]` provides a single-session buffer for inbound `a1`
+fragments. The application calls `nano_ble_inbox_begin` with the session tag
+and fragment count, then feeds frames to `nano_ble_inbox_accept` from its
+serialized receive context. On `NANO_INBOX_COMPLETE`, `data` and `length`
+contain the assembled message until the next begin or reset. A publish
+callback sends the fragment acknowledgement; on failure, the inbox leaves its
+state unchanged so the caller can retry. Earlier fragments are reported as
+duplicates and out-of-order fragments are ignored. The caller still owns
+session selection, arbitration, acknowledgements for duplicates, radio setup,
+timeouts and cleanup.
+
+On 2026-11-02, `python -m experiments.ble.inbox_host` sent a 216-byte binary
+request to the rebuilt queue probe. The host verified both the device's
+reversed diagnostic response and its original-data echo. The device log recorded
+one completed 216-byte request, an acknowledged outbox, restored hook, and zero
+transport and controller statuses for scan and advertising shutdown. Native C
+tests cover all 12 fragments, duplicates, ordering and synthetic publish
+failure. This is one hardware run, using Windows for the BLE host; it does not
+establish loss recovery, cross-platform operation or delivery guarantees. The
+16-bit session tags and cleartext advertisements provide no authentication.
 
 `nano_ble_queue.[ch]` adds a four-entry FIFO of copied messages, each at most
 216 bytes, and `test_queue.c` checks bounds, full and empty behavior, copying,
