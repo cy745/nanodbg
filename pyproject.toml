@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nanodbg"
+version = "0.1.0.dev0"
+description = "Experimental native debugger for an instrumented iPod nano 7G"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+
+[project.scripts]
+nanodbg = "nanodbg.__main__:cli"
+
+[tool.setuptools]
+packages = ["nanodbg"]

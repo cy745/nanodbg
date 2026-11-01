@@ -1,0 +1,514 @@
+diff --git a/nanoapps/system/silver_resident/silver_resident.c b/nanoapps/system/silver_resident/silver_resident.c
+index fdca963..fa5ff94 100644
+--- a/nanoapps/system/silver_resident/silver_resident.c
++++ b/nanoapps/system/silver_resident/silver_resident.c
+@@ -63,6 +63,152 @@
+ #define BOOT_REPORT_LAUNCH_LOG_WORDS         5u
+ #define BOOT_REPORT_LAUNCH_LOG_CAPACITY      8u
+ 
++/* ---- 蓝牙 HCI 抓包（resident 常驻，不受应用切换影响） ----
++ * 钩子只做纯内存记录：把 rx_feed 收到的字节按 [u16 len][bytes] 写进环形缓冲。
++ * 环形缓冲的地址与写指针发布到报告页的两个空闲位置，应用据此导出。
++ * 注意：钩子在蓝牙接收上下文运行，绝对不能调用文件系统。 */
++#define BT_TRANSPORT_SLOT_ADDR  0x0895c134u
++#define BT_SLOT_SEND_OFFSET     0x18u
++#define BT_SLOT_RX_OFFSET       0x20u
++#define BT_SLOT_SEND2_OFFSET    0x2Cu
++#define BT_RX_HOOK_RING_SIZE    (48u * 1024u)
++#define BTSPY_TX_FLAG           0x8000u     /* 记录头 len 的最高位 = 发送方向 */
++#define BOOT_REPORT_BTSPY_PTR_OFFSET  0x1c0u
++#define BOOT_REPORT_BTSPY_WR_OFFSET   0x1c4u
++#define BOOT_REPORT_BTSPY_LOST_OFFSET 0x1c8u
++
++typedef int (*bt_rx_feed_fn)(uint8_t *buf, uint16_t len);
++typedef int (*bt_send_fn)(int type, int opcode, int len);
++typedef int (*bt_send2_fn)(int type, int opcode, int len, const void *data);
++
++static uint8_t  s_btspy_ring[BT_RX_HOOK_RING_SIZE];
++static volatile uint32_t s_btspy_wr;
++static volatile uint32_t s_btspy_lost;
++static bt_rx_feed_fn     s_btspy_orig;
++static bt_send_fn        s_btspy_orig_send;
++static bt_send2_fn       s_btspy_orig_send2;
++static uint32_t          s_btspy_slot;
++static volatile int      s_btspy_on;
++
++/* 统一记录：flags 为 0（接收）或 BTSPY_TX_FLAG（发送） */
++static void btspy_rec(const uint8_t *p, uint32_t len, uint32_t flags)
++{
++    uint32_t need, aligned, w;
++    if (!p || !len || len > 300u)
++        return;
++    need = 2u + len;
++    aligned = (need + 3u) & ~3u;
++    w = s_btspy_wr;
++    if (w + aligned > BT_RX_HOOK_RING_SIZE)
++        w = 0;                                   /* 回绕 */
++    s_btspy_ring[w]     = (uint8_t)(len & 0xffu);
++    s_btspy_ring[w + 1] = (uint8_t)(((len >> 8) & 0x7fu) | (flags ? 0x80u : 0u));
++    for (uint32_t i = 0; i < len; i++)
++        s_btspy_ring[w + 2u + i] = p[i];
++    s_btspy_wr = w + aligned;
++}
++
++static int btspy_hook(uint8_t *buf, uint16_t len)
++{
++    if (s_btspy_on)
++        btspy_rec(buf, len, 0);
++    return s_btspy_orig ? s_btspy_orig(buf, len) : 0;
++}
++
++/* 包缓冲：*(0x0896DD18 + 0x10) = H4 报文起始地址 */
++#define BT_PKT_BUF_GLOBAL  0x0896dd18u
++
++static const uint8_t *btspy_pkt_buf(void)
++{
++    /* 结构体就在 BT_PKT_BUF_GLOBAL 处，+0x10 直接是包缓冲地址 */
++    return (const uint8_t *)(uintptr_t)(*(volatile uint32_t *)(BT_PKT_BUF_GLOBAL + 0x10u));
++}
++
++/* 发送钩子：先让原函数把包写进缓冲，再整包读取（含暂存区的参数） */
++static int btspy_send_hook(int type, int opcode, int len)
++{
++    int rc = s_btspy_orig_send ? s_btspy_orig_send(type, opcode, len) : 0x70;
++    if (s_btspy_on && rc == 0x271) {          /* 625 = 已入队 */
++        const uint8_t *pb = btspy_pkt_buf();
++        if (pb) {
++            /* 长度以包头为准：命令 [type][op][op][plen]，ACL [type][h][h][l][l] */
++            uint32_t total;
++            if (type == 2)
++                total = 5u + ((uint32_t)pb[3] | ((uint32_t)pb[4] << 8));
++            else
++                total = 4u + (uint32_t)pb[3];
++            if (total >= 4u && total <= 300u)
++                btspy_rec(pb, total, BTSPY_TX_FLAG);
++        }
++    }
++    return rc;
++}
++
++static int btspy_send2_hook(int type, int opcode, int len, const void *data)
++{
++    int rc = s_btspy_orig_send2 ? s_btspy_orig_send2(type, opcode, len, data) : 0x70;
++    if (s_btspy_on && rc == 0x271) {
++        const uint8_t *pb = btspy_pkt_buf();
++        if (pb) {
++            uint32_t total;
++            if (type == 2)
++                total = 5u + ((uint32_t)pb[3] | ((uint32_t)pb[4] << 8));
++            else
++                total = 4u + (uint32_t)pb[3];
++            if (total >= 4u && total <= 300u)
++                btspy_rec(pb, total, BTSPY_TX_FLAG);
++        }
++    }
++    return rc;
++}
++
++static void btspy_arm(void)
++{
++    if (s_btspy_on)
++        return;
++    uint32_t obj = *(volatile uint32_t *)BT_TRANSPORT_SLOT_ADDR;
++    if (!obj || obj == 0x0895c100u)     /* 蓝牙关闭时的静态桩 */
++        return;
++    uint32_t slot = obj + BT_SLOT_RX_OFFSET;
++    uint32_t cur = *(volatile uint32_t *)slot;
++    if (!cur || cur == ((uint32_t)(uintptr_t)&btspy_hook | 1u))
++        return;
++
++    /* RX */
++    s_btspy_orig = (bt_rx_feed_fn)cur;
++    s_btspy_slot = slot;
++    *(volatile uint32_t *)slot = (uint32_t)(uintptr_t)&btspy_hook | 1u;
++    hb_icache_invalidate(slot, 4);
++
++    /* TX: send */
++    {
++        uint32_t s2 = obj + BT_SLOT_SEND_OFFSET;
++        uint32_t v = *(volatile uint32_t *)s2;
++        if (v && v != ((uint32_t)(uintptr_t)&btspy_send_hook | 1u)) {
++            s_btspy_orig_send = (bt_send_fn)v;
++            *(volatile uint32_t *)s2 = (uint32_t)(uintptr_t)&btspy_send_hook | 1u;
++            hb_icache_invalidate(s2, 4);
++        }
++    }
++    /* TX: send2 */
++    {
++        uint32_t s3 = obj + BT_SLOT_SEND2_OFFSET;
++        uint32_t v = *(volatile uint32_t *)s3;
++        if (v && v != ((uint32_t)(uintptr_t)&btspy_send2_hook | 1u)) {
++            s_btspy_orig_send2 = (bt_send2_fn)v;
++            *(volatile uint32_t *)s3 = (uint32_t)(uintptr_t)&btspy_send2_hook | 1u;
++            hb_icache_invalidate(s3, 4);
++        }
++    }
++    s_btspy_on = 1;
++    /* 发布环形缓冲位置 */
++    *(volatile uint32_t *)(BOOT_REPORT_BASE + BOOT_REPORT_BTSPY_PTR_OFFSET) =
++        (uint32_t)(uintptr_t)s_btspy_ring;
++    *(volatile uint32_t *)(BOOT_REPORT_BASE + BOOT_REPORT_BTSPY_WR_OFFSET) =
++        (uint32_t)(uintptr_t)&s_btspy_wr;
++    *(volatile uint32_t *)(BOOT_REPORT_BASE + BOOT_REPORT_BTSPY_LOST_OFFSET) = 0;
++}
++
+ static int hb_boot_report_live(void)
+ {
+     return *(volatile uint32_t *)(BOOT_REPORT_BASE + BOOT_REPORT_MAGIC_OFFSET) ==
+@@ -1034,6 +1180,12 @@ static void           *s_app_arena[HB_MAX_APPS];
+ static uint32_t        s_app_code_len[HB_MAX_APPS];
+ static uint32_t        s_app_fail_mask;
+ 
++/* 自动启动：/Apps/Startup/autolaunch 里写一个应用名（CFBundleName），
++ * 首次主屏 dispatch 后启动延时计时器，用于无人值守的迭代测试。
++ *   -2 = 尚未解析， -1 = 无， >=0 = 待启动的 g_launch 槽位 */
++#define AUTOLAUNCH_PATH "/Apps/Startup/autolaunch"
++static int             s_auto_slot = -2;
++
+ static void hb_app_executable_path(char path[64], const hb_app_launch_t *L)
+ {
+     const char *pre = "/Apps/Executables/";
+@@ -1217,6 +1369,188 @@ static void hb_app_launch(void *self, const hb_app_launch_t *L)
+     }
+ }
+ 
++/* Autostart after the USB/home transition has had time to settle. Timer
++ * messages run on the global controller's UI task, just like a normal tap.
++ * Keep the timer and hook alive for the boot, including after cancellation. */
++#define AUTO_GLOBAL_GET 0x083fb524u
++#define AUTO_DELAY_MS 15000u
++#define AUTO_RETRY_MS 3000u
++static uint8_t s_auto_timer[128] __attribute__((aligned(8)));
++static msg_fn_t s_auto_global_orig;
++static void *s_auto_home;
++static int s_auto_pending = -1;
++static unsigned s_auto_retries;
++
++static int hb_auto_global_msg(void *self, void *msg)
++{
++    if (msg && *(uint32_t *)((char *)msg + MSG_FTYPE_OFF) == 16u &&
++        *(void **)((char *)msg + 8u) == (void *)s_auto_timer) {
++        int slot = s_auto_pending;
++        if (slot >= 0 && slot < g_launch_count) {
++            const hb_app_launch_t *L = &g_launch[slot];
++            char path[64];
++            hb_app_executable_path(path, L);
++            if ((L->app_kind == HB_APP_KIND_CUSTOM_SCREEN ||
++                 L->app_kind == HB_APP_KIND_GL_SURFACE) && !hb_fs_size(path)) {
++                if (s_auto_retries++ < 20u) {
++                    ((timer_set_t)(A_TIMER_SET | 1u))(s_auto_timer, (long long)AUTO_RETRY_MS);
++                    ((timer1_t)(A_TIMER_START | 1u))(s_auto_timer);
++                } else {
++                    s_auto_pending = -1;
++                    hb_trace_log("AUTONOFS", (uint32_t)slot, s_auto_retries);
++                }
++                return 1;
++            }
++            s_auto_pending = -1;
++            hb_trace_log("AUTOFIRE", (uint32_t)slot, s_auto_retries);
++            hb_app_launch(s_auto_home, L);
++        }
++        return 1;
++    }
++    return s_auto_global_orig ? s_auto_global_orig(self, msg) : 0;
++}
++
++static int hb_auto_arm(void *home, int slot)
++{
++    void *g = ((getvoid_t)(AUTO_GLOBAL_GET | 1u))();
++    uint32_t *vt;
++    if (!g) return 0;
++    vt = *(uint32_t **)g;
++    if (!vt) return 0;
++    s_auto_global_orig = (msg_fn_t)(uintptr_t)vt[MSG_SLOT_OFF / 4u];
++    vt[MSG_SLOT_OFF / 4u] = ((uint32_t)(uintptr_t)&hb_auto_global_msg) | 1u;
++    hb_icache_invalidate((uint32_t)(uintptr_t)vt, MSG_SLOT_OFF + 8u);
++    s_auto_home = home;
++    s_auto_pending = slot;
++    s_auto_retries = 0;
++    ((timer_ctor_t)(A_TIMER_CTOR | 1u))(s_auto_timer, g, 0, 0);
++    ((timer_set_t)(A_TIMER_SET | 1u))(s_auto_timer, (long long)AUTO_DELAY_MS);
++    ((timer1_t)(A_TIMER_START | 1u))(s_auto_timer);
++    hb_trace_log("AUTOARM ", (uint32_t)slot, AUTO_DELAY_MS);
++    return 1;
++}
++
++/* USB debugger rendezvous. The SCSI task only sets a flag; the UI task owns
++ * the capture buffer and copies the display, avoiding OS calls in SCSI context. */
++typedef struct {
++    uint32_t magic, version, capture_fn, sequence, status;
++    uint32_t pixels, width, height, app_id, app_visible;
++    uint32_t touch_fn[19], touch_sequence, touch_status;
++} hb_debug_report_t;
++static volatile hb_debug_report_t s_debug;
++static volatile uint32_t s_debug_request;
++static uint8_t s_debug_timer[128] __attribute__((aligned(8)));
++static msg_fn_t s_debug_orig;
++static uint32_t *s_debug_pixels;
++static int s_debug_installed;
++static volatile uint32_t s_debug_x, s_debug_y, s_debug_tap;
++static uint32_t s_debug_tap_phase;
++
++static void hb_debug_capture_request(void) { s_debug_request = 1; }
++static void hb_debug_touch_clear(void) { s_debug_x = s_debug_y = 0; }
++#define DEBUG_X_BIT(n) static void hb_debug_x##n(void) { s_debug_x |= 1u << n; }
++#define DEBUG_Y_BIT(n) static void hb_debug_y##n(void) { s_debug_y |= 1u << n; }
++DEBUG_X_BIT(0) DEBUG_X_BIT(1) DEBUG_X_BIT(2) DEBUG_X_BIT(3)
++DEBUG_X_BIT(4) DEBUG_X_BIT(5) DEBUG_X_BIT(6) DEBUG_X_BIT(7)
++DEBUG_Y_BIT(0) DEBUG_Y_BIT(1) DEBUG_Y_BIT(2) DEBUG_Y_BIT(3)
++DEBUG_Y_BIT(4) DEBUG_Y_BIT(5) DEBUG_Y_BIT(6) DEBUG_Y_BIT(7) DEBUG_Y_BIT(8)
++static void hb_debug_touch_commit(void) { s_debug_tap = 1; }
++
++static void hb_debug_capture(void)
++{
++    volatile uint32_t *r = (volatile uint32_t *)0x38900000u;
++    uint32_t fmt = (r[0x20/4] >> 8) & 15u, wh = r[0x30/4];
++    uint32_t w = (wh >> 16) & 511u, h = wh & 511u;
++    uint32_t span = r[0x28/4] & 4095u, sxy = r[0x2c/4];
++    uint32_t x, y, tries, sx = (sxy >> 16) & 2047u, sy = sxy & 2047u;
++    s_debug.status = 2;
++    if (!w || !h || w > 432u || h > 432u || w * h > 240u * 432u ||
++        span < w + sx || (fmt != 4u && fmt != 7u)) goto done;
++    if (!s_debug_pixels) s_debug_pixels = (uint32_t *)hb_os_alloc(240u * 432u * 4u);
++    if (!s_debug_pixels) goto done;
++    for (tries = 0; tries < 4; tries++) {
++        uint32_t base = r[0x24/4];
++        if (!base) goto done;
++        for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
++            uint32_t idx = (sy + y) * span + sx + x, c;
++            if (fmt == 7u) c = ((volatile uint32_t *)(uintptr_t)base)[idx] & 0xffffffu;
++            else {
++                uint32_t v = ((volatile uint16_t *)(uintptr_t)base)[idx];
++                uint32_t rr = (v >> 11) & 31u, gg = (v >> 5) & 63u, bb = v & 31u;
++                c = ((rr * 255u / 31u) << 16) | ((gg * 255u / 63u) << 8) | (bb * 255u / 31u);
++            }
++            s_debug_pixels[y * w + x] = c;
++        }
++        if (r[0x24/4] == base) break;
++    }
++    s_debug.pixels = (uint32_t)(uintptr_t)s_debug_pixels;
++    s_debug.width = w; s_debug.height = h; s_debug.status = 1;
++done:
++    __asm__ volatile("dsb sy" : : : "memory");
++    s_debug.sequence++;
++}
++
++static int hb_debug_msg(void *self, void *msg)
++{
++    if (msg && *(uint32_t *)((char *)msg + MSG_FTYPE_OFF) == 16u &&
++        *(void **)((char *)msg + 8u) == (void *)s_debug_timer) {
++        s_debug.app_id = s_cur_app_id;
++        s_debug.app_visible = s_surface_view != 0;
++        if (s_debug_request) { s_debug_request = 0; hb_debug_capture(); }
++        if (s_debug_tap_phase) {
++            if (--s_debug_tap_phase == 0) {
++                s_shared.touch[3] = 0;
++                s_debug.touch_status = 1;
++                s_debug.touch_sequence++;
++            }
++        } else if (s_debug_tap) {
++            s_debug_tap = 0;
++            if (s_surface_view && s_debug_x < 240u && s_debug_y < 432u) {
++                s_shared.touch[1] = (int32_t)s_debug_x;
++                s_shared.touch[2] = (int32_t)s_debug_y;
++                s_shared.touch[3] = 1;
++                s_shared.touch[0] = (int32_t)TOUCH_MB_MAGIC;
++                s_debug_tap_phase = 2;
++            } else {
++                s_debug.touch_status = 2;
++                s_debug.touch_sequence++;
++            }
++        }
++        ((timer_set_t)(A_TIMER_SET | 1u))(s_debug_timer, (long long)200u);
++        ((timer1_t)(A_TIMER_START | 1u))(s_debug_timer);
++        return 1;
++    }
++    return s_debug_orig ? s_debug_orig(self, msg) : 0;
++}
++
++static void hb_debug_install(void)
++{
++    void *g; uint32_t *vt;
++    if (s_debug_installed) return;
++    g = ((getvoid_t)(AUTO_GLOBAL_GET | 1u))();
++    if (!g || !(vt = *(uint32_t **)g)) return;
++    s_debug_orig = (msg_fn_t)(uintptr_t)vt[MSG_SLOT_OFF / 4u];
++    vt[MSG_SLOT_OFF / 4u] = ((uint32_t)(uintptr_t)&hb_debug_msg) | 1u;
++    hb_icache_invalidate((uint32_t)(uintptr_t)vt, MSG_SLOT_OFF + 8u);
++    s_debug.magic = 0x4742444eu; s_debug.version = 2;
++    s_debug.capture_fn = ((uint32_t)(uintptr_t)&hb_debug_capture_request) | 1u;
++    {
++        void (*const f[])(void) = { hb_debug_touch_clear,
++            hb_debug_x0, hb_debug_x1, hb_debug_x2, hb_debug_x3,
++            hb_debug_x4, hb_debug_x5, hb_debug_x6, hb_debug_x7,
++            hb_debug_y0, hb_debug_y1, hb_debug_y2, hb_debug_y3,
++            hb_debug_y4, hb_debug_y5, hb_debug_y6, hb_debug_y7, hb_debug_y8,
++            hb_debug_touch_commit };
++        unsigned i;
++        for (i = 0; i < 19u; i++) s_debug.touch_fn[i] = ((uint32_t)(uintptr_t)f[i]) | 1u;
++    }
++    hb_boot_report(0x1d0u, (uint32_t)(uintptr_t)&s_debug);
++    s_debug_installed = 1;
++    ((timer_ctor_t)(A_TIMER_CTOR | 1u))(s_debug_timer, g, 0, 0);
++    ((timer_set_t)(A_TIMER_SET | 1u))(s_debug_timer, (long long)200u);
++    ((timer1_t)(A_TIMER_START | 1u))(s_debug_timer);
++}
++
+ /* RAW-MESSAGE slot (+0x188): taps arrive here. Translate the message EXACTLY
+  * once; if it's one of our custom items ("sbitem.hb.<folder>.clicked"), route it
+  * and consume; otherwise the helper dispatches it directly (no re-forward,
+@@ -1238,6 +1572,11 @@ static int rawmsg_hook(void *self, void *msg)
+             const char *a = g_launch[k].sbid, *p = sb;
+             while (*a && *a == *p) { a++; p++; }
+             if (*a == 0 && *p == '.') {       /* full sbid matched, then ".clicked" */
++                if (s_auto_pending >= 0) {
++                    s_auto_pending = -1;
++                    ((timer1_t)(A_TIMER_STOP | 1u))(s_auto_timer);
++                    hb_trace_log("AUTOCAN ", (uint32_t)k, 0);
++                }
+                 hb_trace_log("HBTAP   ", (uint32_t)k, g_launch[k].app_id);
+                 hb_app_launch(self, &g_launch[k]);
+                 break;
+@@ -1252,6 +1591,9 @@ static int rawmsg_hook(void *self, void *msg)
+ __attribute__((section(".text.hook"), used, noinline))
+ static int action_hook(void *self, const char *name, void *msg)
+ {
++    /* 每次主屏动作都尝试布防 HCI 抓包（已布防时只是一次比较，开销可忽略）。 */
++    btspy_arm();
++
+     /* (2) Once per boot: build every forwarding trampoline (in our .bss) from
+      * the verified 39A10023 stock prologue, then point the firmware entry at our
+      * hook. Always from the stock bytes, so a firmware entry a previous boot
+@@ -1367,6 +1709,58 @@ static int action_hook(void *self, const char *name, void *msg)
+                                 g_launch, HB_MAX_APPS,
+                                 SILVERDB_OBJ, SILVERDB_NODE, reg);
+         hb_trace_log("APPSREG ", (uint32_t)g_launch_count, (uint32_t)reg);
++
++        /* ---- 自动启动名单 ----
++         * /Apps/Startup/autolaunch 内容 = 要自动启动的 CFBundleName。
++         * 主屏首次 dispatch 返回后设置延时计时器（见 action_hook 末尾）。 */
++        s_auto_slot = -1;
++        {
++            char want[40] = {0};
++            if (hb_fs_read(AUTOLAUNCH_PATH, want, sizeof want - 1) > 0) {
++                /* 去掉可能的换行/回车 */
++                for (int i = 0; i < (int)sizeof want && want[i]; i++)
++                    if (want[i] == '\r' || want[i] == '\n') { want[i] = 0; break; }
++                for (int i = 0; i < g_launch_count; i++) {
++                    const char *a = g_launch[i].name;
++                    int j = 0;
++                    while (a[j] && want[j] && a[j] == want[j])
++                        j++;
++                    if (a[j] == 0 && want[j] == 0) {
++                        s_auto_slot = i;
++                        break;
++                    }
++                }
++            }
++            hb_trace_log("AUTOLNCH", (uint32_t)s_auto_slot, (uint32_t)g_launch_count);
++        }
++
++        /* ---- 诊断落盘：受限 SCSI 通道读不到 RAM，只能靠文件回传。
++         * 记录 reg / 应用数 / 自动启动槽 / icon_live 四个关键判定。 */
++        {
++            char dg[96];
++            int n = 0;
++            uint32_t vals[4];
++            const char *tags[4] = { "reg=", " n=", " auto=", " live=" };
++            vals[0] = (uint32_t)reg;
++            vals[1] = (uint32_t)g_launch_count;
++            vals[2] = (uint32_t)(s_auto_slot < 0 ? 999u : (uint32_t)s_auto_slot);
++            vals[3] = (uint32_t)hb_silver_icon_live();
++            for (int i = 0; i < 4; i++) {
++                for (const char *t = tags[i]; *t; t++)
++                    dg[n++] = *t;
++                uint32_t v = vals[i];
++                char tmp[10];
++                int k = 0;
++                if (v == 0)
++                    tmp[k++] = '0';
++                while (v) { tmp[k++] = (char)('0' + (v % 10u)); v /= 10u; }
++                while (k)
++                    dg[n++] = tmp[--k];
++            }
++            dg[n++] = '\n';
++            dg[n] = 0;
++            hb_fs_write("/Apps/Startup/diag.txt", dg, (uint32_t)n + 1);
++        }
+         hb_boot_report(BOOT_REPORT_REGISTER_OFFSET, 1);
+         hb_boot_report(BOOT_REPORT_APP_COUNT_OFFSET,
+                        (uint32_t)g_launch_count);
+@@ -1386,7 +1780,17 @@ static int action_hook(void *self, const char *name, void *msg)
+             hb_trace_log("DEVCOLOR", (uint32_t)dc_idx,
+                          (uint32_t)hb_devcolor_get());
+     }
+-    return ((dispatch_t)HB_SILVER_HOME_DISPATCH_ORIG)(self, name, msg);
++    /* ---- 自动启动：主屏 dispatch 完成后安排一次延迟启动 ---- */
++    int _r = ((dispatch_t)HB_SILVER_HOME_DISPATCH_ORIG)(self, name, msg);
++    hb_debug_install();
++    if (s_auto_slot >= 0) {
++        int slot = s_auto_slot;
++        s_auto_slot = -1;
++        hb_trace_log("AUTORUN ", (uint32_t)slot, (uint32_t)g_launch[slot].app_id);
++        if (!hb_auto_arm(self, slot))
++            hb_trace_log("AUTOFAIL", (uint32_t)slot, 0);
++    }
++    return _r;
+ }
+ 
+ /* Entry, called once per boot by the heap bootstrap after it has loaded,
+diff --git a/untether/ipod_sun_untethered/src/payload/bootstrap.rs b/untether/ipod_sun_untethered/src/payload/bootstrap.rs
+index 8b10e71..78278da 100644
+--- a/untether/ipod_sun_untethered/src/payload/bootstrap.rs
++++ b/untether/ipod_sun_untethered/src/payload/bootstrap.rs
+@@ -7,9 +7,9 @@ use anyhow::{ensure, Result};
+ pub const DEFERRED_CAVE_ADDRESS: u32 = 0x086c_97e4;
+ pub const DEFERRED_CAVE_CAPACITY: usize = 0x7f4;
+ pub const DEFERRED_STAGE_SIZE: usize = 0x600;
+-pub const DEFERRED_PUBLISHER_SIZE: usize = 0x1f4;
+-const PUBLISHER_REPORTER_OFFSET: usize = 0x19c;
+-const REPORTER_SIZE: usize = 88;
++pub const DEFERRED_PUBLISHER_SIZE: usize = 0x1e0;
++const PUBLISHER_REPORTER_OFFSET: usize = 0x154;
++const REPORTER_SIZE: usize = 140;
+ 
+ /// Header plus partitioned ACTION/completion records. The CFF writer skips only
+ /// this range on first and repeat decodes: stock cave bytes supply initial
+diff --git a/untether/publisher/recorder_publisher.S b/untether/publisher/recorder_publisher.S
+index 56a4d90..13ba9fb 100644
+--- a/untether/publisher/recorder_publisher.S
++++ b/untether/publisher/recorder_publisher.S
+@@ -91,29 +91,14 @@ cff_install_cave:
+     ldr   r4, =RECORDER_STATE
+     ldr   r3, =REPORT_MAGIC
+     str   r3, [r4, #REPORT_MAGIC_OFFSET]
+-    movs  r3, #1
+-    str   r3, [r4, #REPORT_STARTED_OFFSET]
+-    mrs   r3, cpsr
+-    str   r3, [r4, #REPORT_CPSR_OFFSET]
++    /* 精简：省略 started / cpsr / reason 的初始化与 detail 清零。
++     * 这些只是诊断字段，resident 运行后会在 diag.txt 里给出更完整的信息；
++     * 省出的字节用于容纳 140 字节完整 SCSI stub。 */
+     movs  r3, #1
+     str   r3, [r4, #REPORT_PHASE_OFFSET]
+-    movs  r3, #0
+-    str   r3, [r4, #REPORT_REASON_OFFSET]
+-    add   r0, r4, #REPORT_DETAIL_OFFSET
+-    movs  r1, #REPORT_DETAIL_WORDS
+-.Lzero_details:
+-    str   r3, [r0], #4
+-    subs  r1, #1
+-    bne   .Lzero_details
+     dsb   sy
+ 
+-    /* Install the same exact 88-byte read-only C6 reporter already proven on
+-     * hardware. The stock C6 callsite itself remains unchanged. */
+-    ldr   r0, =C6_DIRECT_CALL
+-    ldr   r1, [r0]
+-    ldr   r2, =STOCK_C6_CALL
+-    cmp   r1, r2
+-    bne   .Lc6_fail
++    /* Copy the full 140-byte C6 handler into the stock call window. */
+     adr   r1, scsi_stub
+     ldr   r0, =SCSI_STUB_DST
+     movs  r2, #(SCSI_STUB_SIZE / 4)
