@@ -270,7 +270,7 @@ def windows_hci_request(transport, path, debugger, probe_file, opcode, params, t
             time.sleep(.25)
         else:
             raise TransportError('HCI probe surface did not become visible')
-        time.sleep(8)  # The probe runs once, five seconds after its entry point.
+        time.sleep(12)  # Includes the probe's startup and bounded Inquiry capture window.
         return mounted(read_and_cleanup)
     except (OSError, TransportError, ValueError) as exc:
         raise TransportError(f'{exc}; request/result may remain and replay on reboot; inspect before retrying') from exc

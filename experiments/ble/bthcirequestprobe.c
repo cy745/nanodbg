@@ -2,11 +2,31 @@
 #include "hb_sdk.h"
 #include "lvgl/lvgl.h"
 #include "bt_hci.h"
+#include "h4_event.h"
 
 static char report[2048];
 static int used;
 static void append(const char *s) { while (*s && used<(int)sizeof report-1) report[used++]=*s++; report[used]=0; }
 static void hexbyte(unsigned b) { const char *h="0123456789abcdef"; char s[4]={h[(b>>4)&15],h[b&15],' ',0}; append(s); }
+static h4_event_parser inquiry_event;
+static rx_feed_t original_rx;
+static volatile uint32_t *rx_slot;
+static int inquiry_hook(uint8_t *buf, uint16_t len) {
+    if (buf) h4_event_feed(&inquiry_event,buf,len);
+    return original_rx ? original_rx(buf,len) : 0;
+}
+static void save(void) { hb_fs_write("/Apps/Data/hci-result.txt",report,used+1); }
+static void finish_inquiry(lv_timer_t *timer) {
+    (void)timer;
+    append("inquiry-complete ");
+    if (inquiry_event.found) hexbyte(inquiry_event.data[0]); else append("none ");
+    append("hook ");
+    if (*rx_slot==((uint32_t)&inquiry_hook | 1u)) {
+        *rx_slot=(uint32_t)original_rx;
+        append("restored\n");
+    } else append("changed\n");
+    save();
+}
 
 static void run(lv_timer_t *timer) {
     (void)timer;
@@ -22,12 +42,29 @@ static void run(lv_timer_t *timer) {
         append("nonce "); for (int i=4;i<8;i++) hexbyte(request[i]);
         append("opcode "); hexbyte(request[8]); hexbyte(request[9]);
         append("params "); for (unsigned i=0;i<request[10];i++) hexbyte(request[11+i]); append("\n");
+        int capture=0;
+        if (opcode==0x0401 && bt_is_on()) {
+            uint32_t obj=*(volatile uint32_t *)BT_TRANSPORT_SLOT;
+            rx_slot=(volatile uint32_t *)(obj+BT_SLOT_RX);
+            original_rx=(rx_feed_t)*rx_slot;
+            if (original_rx) {
+                h4_event_init(&inquiry_event,0x01,1);
+                *rx_slot=(uint32_t)&inquiry_hook | 1u;
+                capture=1;
+            }
+        }
         int rc=bt_hci_cmd_ack(opcode,request+11,request[10],out,sizeof out,&outlen,&status,&response_event);
         append("rc "); hexbyte(rc & 255); append("status "); hexbyte(status);
         append("event "); hexbyte(response_event);
         append("data "); for (int i=0;i<outlen;i++) hexbyte(out[i]); append("\n");
+        if (capture) {
+            lv_timer_t *wait=lv_timer_create(finish_inquiry,3000,0);
+            if (wait) lv_timer_set_repeat_count(wait,1);
+            else finish_inquiry(0);
+            return;
+        }
     }
-    hb_fs_write("/Apps/Data/hci-result.txt",report,used+1);
+    save();
 }
 
 HB_APP_ENTRY(payload_entry) {

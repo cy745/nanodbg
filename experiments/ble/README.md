@@ -35,8 +35,9 @@ hardware run does not prove correct behavior for all traffic or concurrency.
 
 `bthcirequestprobe.c` loads one host-prepared command from
 `/Apps/Data/hci-request.bin` and writes `/Apps/Data/hci-result.txt` after its
-five-second startup delay. Build it as BTRawProbe alongside `bt_hci.c` and
-`h4_complete.c`; this repository still does not package the NanoApps SDK build.
+five-second startup delay (longer for Inquiry). Build it as BTRawProbe alongside
+`bt_hci.c`, `h4_complete.c` and `h4_event.h`; this repository still does not
+package the NanoApps SDK build.
 On Windows, after deploying this probe and setting it as the autostart app,
 run a request from the repository root:
 
@@ -74,7 +75,14 @@ This is a file-driven, one-command-per-launch experiment, not a live HCI
 debugger. **The request executes again on every launch while the file remains
 present**; remove the request and restore the normal app after testing. Commands
 can change shared controller state, and this probe does not undo those changes.
-The probe does not capture later asynchronous completion events.
+For Inquiry (`0x0401`) the probe also watches for the first one-byte Inquiry
+Complete event during a three-second window, reporting `inquiry_complete_status`
+and whether its hook was restored. `null` means no such event was observed,
+not necessarily that the operation failed. The event carries no command ID;
+another inquiry or a concurrent system user can confound correlation. Longer
+inquiries can outlive the window. Other asynchronous completions are not yet
+captured. Keep the probe active until the hook is restored, and reboot if the
+result says the hook changed. The parser assumes an H4 frame boundary.
 The controller, shared hook, timeout and parser synchronization limits above
 apply. The automated host workflow currently supports Windows only.
 
@@ -90,6 +98,11 @@ With the acknowledgement-aware probe, an Inquiry (`0x0401`, parameters
 The probe did not record whether the inquiry later completed. The iPod was
 rebooted after this test. A subsequent LE Set Scan Parameters request returned
 event `0x0e`, rc 0 and status 0 with the same probe.
+With the Inquiry event-capture probe, `0x0401` parameters `338b9e0100`
+(1.28-second Inquiry) returned Command Status `0x00` and recorded Inquiry
+Complete status `0x00` in two runs; the probe reported its hook restored. It
+does not timestamp the events, so the log does not independently prove order.
+This does not identify any devices or establish a connection.
 
 `btscanprobe.c` scans briefly and stores the first matching payload from a
 manufacturer advertisement with company field `ffff` and prefix `NDBG` in

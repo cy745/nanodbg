@@ -26,6 +26,12 @@ class HciRequestTests(unittest.TestCase):
         self.assertIsNone(result['response_event'])
         with_event = raw.replace(b'status 12 data', b'status 12 event 0f data')
         self.assertEqual(parse_result(with_event, request)['response_event'], 0x0f)
+        capture = with_event[:-1] + b'inquiry-complete 00 hook restored\n\0'
+        self.assertEqual(parse_result(capture, request)['inquiry_complete_status'], 0)
+        self.assertEqual(parse_result(capture, request)['inquiry_hook'], 'restored')
+        no_capture = with_event[:-1] + b'inquiry-complete none hook changed\n\0'
+        self.assertIsNone(parse_result(no_capture, request)['inquiry_complete_status'])
+        self.assertEqual(parse_result(no_capture, request)['inquiry_hook'], 'changed')
         with self.assertRaises(ValueError):
             parse_result(raw, encode_request(0x1405, b'\xff\x0f', b'xxxx'))
         with self.assertRaises(ValueError):

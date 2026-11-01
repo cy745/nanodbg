@@ -14,10 +14,11 @@ def parse_result(raw, request):
         match = re.fullmatch(
             r'hci-request-v1\r?\nnonce ((?:[0-9a-f]{2} ){4})opcode ((?:[0-9a-f]{2} ){2})'
             r'params ((?:[0-9a-f]{2} )*)\r?\nrc ([0-9a-f]{2}) status ([0-9a-f]{2}) '
-            r'(?:event ([0-9a-f]{2}) )?data ((?:[0-9a-f]{2} )*)\r?\n', text)
+            r'(?:event ([0-9a-f]{2}) )?data ((?:[0-9a-f]{2} )*)\r?\n'
+            r'(?:inquiry-complete (none|[0-9a-f]{2}) hook (restored|changed)\r?\n)?', text)
         if not match:
             raise ValueError('malformed HCI result')
-        nonce, opcode, params, rc, status, event, data = match.groups()
+        nonce, opcode, params, rc, status, event, data, inquiry, hook = match.groups()
         if (bytes.fromhex(nonce) != request[4:8] or bytes.fromhex(opcode) != request[8:10]
                 or bytes.fromhex(params) != request[11:]):
             raise ValueError('HCI result does not match request')
@@ -26,6 +27,8 @@ def parse_result(raw, request):
                 'params_hex': request[11:].hex(), 'rc': rc-256 if rc >= 128 else rc,
                 'controller_status': int(status, 16),
                 'response_event': int(event, 16) if event is not None else None,
-                'data_hex': bytes.fromhex(data).hex()}
+                'data_hex': bytes.fromhex(data).hex(),
+                'inquiry_complete_status': int(inquiry, 16) if inquiry and inquiry != 'none' else None,
+                'inquiry_hook': hook}
     except (UnicodeError, IndexError) as exc:
         raise ValueError('malformed HCI result') from exc
