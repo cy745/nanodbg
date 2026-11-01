@@ -384,3 +384,13 @@ no authentication or confidentiality, and the host cannot concurrently send
 application data while a notice is pending. The 180-second watchdog and hook
 lifecycle limitations still apply. The experiment adds a separate `b4`/`b5`
 shutdown command only after both notices, not a general cancellation protocol.
+
+
+The integrated host command `python -m nanodbg ble interactive --probe
+autonomous` receives these two notices and then accepts normal hexadecimal
+requests in the same session. On 2026-11-02 it was tested on hardware receiving
+both notices followed by a 21-byte request; the reversed response and original
+outbox echo matched, and the device reported hook restoration and successful
+scan/advertising shutdown. The `--probe` selection must match the deployed
+firmware. Notifications are received before interactive input; they are not
+an asynchronous background subscription or unrestricted duplex transport.

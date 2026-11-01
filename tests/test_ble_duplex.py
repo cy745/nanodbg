@@ -56,6 +56,40 @@ class FakeRadio:
         return packet
 
 
+class AutonomousRadio(FakeRadio):
+    def __init__(self):
+        super().__init__()
+        self.notices = {0x80: bytes(range(40)), 0x81: bytes(range(100))}
+        self.index = 0
+
+    async def receive(self, accept):
+        if self.index == 0:
+            self.index += 1
+            return await super().receive(accept)
+        number = 0x7f + self.index
+        self.index += 1
+        payload = self.notices[number]
+        packet = bytes((0xb0, number, 0, (len(payload)+18)//19)) + payload[:19]
+        assert accept(packet)
+        return packet
+
+    async def exchange(self, data, accept):
+        if data[0] == 0xb1 and data[1] in self.notices:
+            payload = self.notices[data[1]]
+            count = (len(payload)+18)//19
+            seq = data[2]+1
+            packet = (bytes((0xb2, data[1], count)) if seq == count else
+                      bytes((0xb0, data[1], seq, count)) + payload[seq*19:(seq+1)*19])
+            assert accept(packet)
+            return packet
+        if data[0] == 0xb4:
+            self.shutdown_seen = True
+            packet = b'\xb5'+data[1:]
+            assert accept(packet)
+            return packet
+        return await super().exchange(data, accept)
+
+
 class DuplexTests(unittest.IsolatedAsyncioTestCase):
     async def test_multiple_requests_and_shutdown(self):
         radio = FakeRadio()
@@ -91,3 +125,24 @@ class DuplexTests(unittest.IsolatedAsyncioTestCase):
             await client.request(b'hello')
         with self.assertRaises(ValueError):
             await client.shutdown()
+
+    async def test_autonomous_notices_followed_by_request(self):
+        radio = AutonomousRadio()
+        client = DuplexClient(radio)
+        await client.start()
+        for ident in (0x80, 0x81):
+            self.assertEqual(await client.receive_notice(ident), radio.notices[ident])
+        result = await client.request(b'after notices')
+        self.assertEqual(result['echo_hex'], b'after notices'.hex())
+        await client.shutdown()
+        self.assertTrue(radio.shutdown_seen)
+
+    async def test_autonomous_shutdown_without_request(self):
+        radio = AutonomousRadio()
+        client = DuplexClient(radio)
+        await client.start()
+        await client.receive_notice(0x80)
+        await client.receive_notice(0x81)
+        await client.shutdown_autonomous()
+        self.assertEqual(client.state, 'closed')
+        self.assertTrue(radio.shutdown_seen)

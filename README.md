@@ -132,3 +132,11 @@ shutdown is not confirmed; the watchdog or reboot is needed. A shutdown event
 confirms the device acknowledged the command and the host waited four seconds;
 only the device log confirms hook and controller cleanup. See the probe README
 for deployment and protocol limitations.
+
+With the separately built autonomous outbox probe instead, use
+`python -m nanodbg ble interactive --probe autonomous`. The client receives
+the probe's two scheduled device-generated notices and prints `device_notice`
+JSON events before accepting requests. It can then send requests and validate
+their responses in the same process. Quitting without a request uses that
+probe's dedicated shutdown command. This mode is specific to the experimental
+probe and is sequential; it does not implement arbitrary simultaneous traffic.

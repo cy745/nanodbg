@@ -65,6 +65,7 @@ class DuplexClient:
         self.round = 0
         self.sessions = set()
         self.last_session = None
+        self.notices_received = set()
 
     async def _notice(self, number, packet=None):
         if packet is None:
@@ -92,6 +93,22 @@ class DuplexClient:
             data = await self._notice(0)
             if len(data) != 5 or data[4] != 0:
                 raise ValueError('invalid startup notice')
+            self.state = 'ready'
+            return data
+        except BaseException:
+            self.state = 'failed'
+            raise
+
+    async def receive_notice(self, number):
+        """Receive an expected device-originated notice while no request is active."""
+        if self.state != 'ready':
+            raise ValueError('client is not ready')
+        if not isinstance(number, int) or not 1 <= number <= 255:
+            raise ValueError('notice identifier must be 1-255')
+        self.state = 'busy'
+        try:
+            data = await self._notice(number)
+            self.notices_received.add(number)
             self.state = 'ready'
             return data
         except BaseException:
@@ -145,6 +162,19 @@ class DuplexClient:
             self.state = 'failed'
             raise
 
+    async def shutdown_autonomous(self):
+        """Shutdown the autonomous probe after its two device notices."""
+        if self.state != 'ready' or self.round or not {0x80, 0x81} <= self.notices_received:
+            raise ValueError('autonomous shutdown requires both notices and no requests')
+        self.state = 'busy'
+        try:
+            tag = secrets.token_bytes(2)
+            await self.radio.exchange(b'\xb4' + tag, lambda d: d == b'\xb5' + tag)
+            self.state = 'closed'
+        except BaseException:
+            self.state = 'failed'
+            raise
+
     async def shutdown(self):
         if self.state != 'ready' or not self.last_session:
             raise ValueError('clean shutdown requires a completed request')
@@ -157,7 +187,7 @@ class DuplexClient:
             raise
 
 
-async def interactive(timeout):
+async def interactive(timeout, probe="runtime"):
     if timeout <= 0:
         raise ValueError('timeout must be positive')
     async with AdvertisementRadio(timeout) as radio:
@@ -165,6 +195,11 @@ async def interactive(timeout):
         try:
             startup = await client.start()
             print(json.dumps({'event': 'ready', 'startup_payload_hex': startup.hex()}), flush=True)
+            if probe == 'autonomous':
+                for number in (0x80, 0x81):
+                    payload = await client.receive_notice(number)
+                    print(json.dumps({'event': 'device_notice', 'id': number,
+                                      'payload_hex': payload.hex()}), flush=True)
             while True:
                 if sys.stdin.isatty():
                     print('hex payload (or quit)> ', end='', file=sys.stderr, flush=True)
@@ -181,6 +216,10 @@ async def interactive(timeout):
                 await client.shutdown()
                 await asyncio.sleep(4)
                 print(json.dumps({'event': 'shutdown_acknowledged', 'cleanup_wait_seconds': 4}), flush=True)
+            elif probe == 'autonomous':
+                await client.shutdown_autonomous()
+                await asyncio.sleep(4)
+                print(json.dumps({'event': 'shutdown_acknowledged', 'cleanup_wait_seconds': 4}), flush=True)
             else:
                 print('No request completed; probe must exit via its watchdog or device reboot.', file=sys.stderr, flush=True)
         except BaseException:
@@ -188,5 +227,5 @@ async def interactive(timeout):
             raise
 
 
-def run_interactive(timeout):
-    asyncio.run(interactive(timeout))
+def run_interactive(timeout, probe="runtime"):
+    asyncio.run(interactive(timeout, probe))
