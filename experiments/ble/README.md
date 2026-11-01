@@ -36,3 +36,13 @@ win the first-payload race. This test has no authentication, sequence numbers,
 acknowledgement, retry or delivery guarantee. The Windows host was tested with
 the instrumented iPod; other hosts remain unverified. The RX hook points into
 the running app, so do not switch away while either receive window is active.
+
+`btsimprobe.c` tests concurrent nonconnectable advertising and passive
+scanning for 12 seconds, then disables both. On the research device the
+controller accepted all setup/cleanup commands (status 0); LE Read Supported
+States returned `ff ff ff 1f 00 00 00 00`. In one run the device received
+47 matching `NDBG` advertisements containing `00c001d0ffee` with no malformed
+reports, and a concurrently running Windows scanner received 16 copies of the
+device's `ND-SIM-2026` advertisement. This demonstrates both directions during
+the same enabled interval, not reliable delivery or connection support. The
+same RX hook lifetime restriction applies; run only on the matching firmware.
