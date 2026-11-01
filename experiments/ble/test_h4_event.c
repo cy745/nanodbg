@@ -47,5 +47,14 @@ int main(void) {
     const uint8_t echo[]={2,0x34,0x22,8,0,4,0,1,0,9,0x73,0,0};
     for (unsigned i=0;i<sizeof echo;i++) h4_event_feed(&p,echo+i,1);
     assert(p.acl_seen==2 && p.acl_found && p.acl_length==8 && p.acl_data[5]==0x73);
+    assert(p.acl_record_count==2 && p.acl_records[1].flags==0x20 &&
+           p.acl_records[1].length==8 && p.acl_records[1].data[5]==0x73);
+    const uint8_t big_header[]={2,0x34,0x22,65,0};
+    h4_event_feed(&p,big_header,sizeof big_header);
+    for (uint8_t i=0;i<65;i++) h4_event_feed(&p,&i,1);
+    assert(p.acl_records[2].length==65 && p.acl_records[2].saved==64 &&
+           p.acl_records[2].data[63]==63);
+    for (int i=0;i<5;i++) h4_event_feed(&p,echo,sizeof echo);
+    assert(p.acl_record_count==6 && p.acl_dropped==2);
     return 0;
 }

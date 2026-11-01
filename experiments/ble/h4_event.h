@@ -6,6 +6,7 @@
 typedef struct {
     uint8_t code, length, saved, data[H4_INQUIRY_MAX_BYTES];
 } h4_inquiry_record;
+typedef struct { uint8_t flags, saved, data[64]; uint16_t length; } h4_acl_record;
 
 /* Captures the first exact event code/length in a serialized H4 stream.
  * As with h4_complete, the stream must start at a packet boundary. */
@@ -18,6 +19,8 @@ typedef struct {
     uint16_t acl_handle, acl_length;
     volatile unsigned acl_seen;
     uint8_t acl_scratch[64], acl_data[64];
+    h4_acl_record acl_records[6];
+    volatile unsigned acl_record_count, acl_dropped;
     uint8_t scratch[H4_INQUIRY_MAX_BYTES];
     h4_inquiry_record records[H4_INQUIRY_MAX_RECORDS];
     volatile unsigned record_count, dropped;
@@ -28,6 +31,7 @@ static void h4_event_init(h4_event_parser *p, uint8_t code, uint8_t length) {
     p->code=code; p->wanted_length=length; p->found=0;
     p->match_address=0;
     p->acl_capture=0; p->acl_found=0; p->acl_seen=0; p->acl_length=0;
+    p->acl_record_count=0; p->acl_dropped=0;
     p->record_count=0; p->dropped=0;
 }
 
@@ -40,6 +44,13 @@ static void h4_event_finish(h4_event_parser *p) {
         ((p->header[0] | ((unsigned)p->header[1]<<8)) & 0x0fff)==p->acl_handle) {
         unsigned length=p->header[2] | ((unsigned)p->header[3]<<8);
         p->acl_seen++;
+        if (p->acl_record_count < 6) {
+            h4_acl_record *r=&p->acl_records[p->acl_record_count];
+            r->flags=p->header[1] & 0xf0; r->length=length;
+            r->saved=length < 64 ? length : 64;
+            for (unsigned j=0;j<r->saved;j++) r->data[j]=p->acl_scratch[j];
+            p->acl_record_count++;
+        } else p->acl_dropped++;
         if (!p->acl_found && (p->header[1] & 0x30)==0x20 && length>=8 && length<=64 &&
             (p->acl_scratch[0] | ((unsigned)p->acl_scratch[1]<<8))==length-4 &&
             (p->acl_scratch[6] | ((unsigned)p->acl_scratch[7]<<8))==length-8 &&

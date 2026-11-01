@@ -712,6 +712,28 @@ the run; the recorded response satisfies them, but that revision has not yet
 been repeated on hardware. Disconnect completion was not captured.
 See the [Bluetooth L2CAP specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host/logical-link-control-and-adaptation-protocol-specification.html).
 
+### RFCOMM L2CAP connection probe
+
+An opt-in `ACL_L2CAP_PROBE` build sends an L2CAP Connection Request for
+RFCOMM PSM 0x0003, source CID 0x00e1, identifier 0x73. It records at most six
+ACL packets on that handle, retaining at most 64 bytes of each; packet boundary
+flags and original length are retained, but fragments are not reassembled.
+This shares the original stack and an arbitrary source CID, so collisions and
+concurrent callback/report activity remain possible. It does not negotiate a
+channel or implement RFCOMM.
+
+On 2026-11-02, an unpaired Windows adapter accepted the HCI ACL connection
+with encryption disabled. The send returned 625, and the probe captured two
+complete signaling responses on that ACL handle, with no recorded drops:
+`0c000100037308004000e10001000000` (pending) followed by
+`0c000100037308004000e10003000000` (refused for security reasons). Both
+identify source CID 0x00e1 and identifier 0x73. No RFCOMM data channel was
+established. The cleanup command returned rc -4 and controller status 0x12;
+the test did not capture a disconnect event, so its final link state cannot
+be inferred from that command. The host radio was restored to its prior state.
+The next experiment should investigate authentication/pairing and a registered
+host RFCOMM listener; a successful channel and payload exchange remain unproven.
+
 
 ### Events during a host request and initial-publish retry
 

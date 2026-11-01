@@ -33,11 +33,12 @@ def parse_result(raw, request):
             r'(?:inquiry-dropped ([0-9a-f]{2}) \r?\n)?)?'
             r'(?:connection-complete (none |(?:[0-9a-f]{2} ){11})hook (restored|changed)\r?\n'
             r'(?:acl-send ((?:[0-9a-f]{2} ){4})seen ([0-9a-f]{2}) echo (none |(?:[0-9a-f]{2} )+)\r?\n)?'
+            r'((?:acl-frame (?:[0-9a-f]{2} ){3}(?:[0-9a-f]{2} )*\r?\n)*)(?:acl-dropped ([0-9a-f]{2}) \r?\n)?'
             r'(?:connection-cleanup ((?:[0-9a-f]{2} ){5})\r?\n)?)?', text)
         if not match:
             raise ValueError('malformed HCI result')
         (nonce, opcode, params, rc, status, event, data, inquiry, hook, records, dropped,
-         connection, connection_hook, acl_send, acl_seen, acl_echo, cleanup) = match.groups()
+         connection, connection_hook, acl_send, acl_seen, acl_echo, acl_frames, acl_dropped, cleanup) = match.groups()
         if (bytes.fromhex(nonce) != request[4:8] or bytes.fromhex(opcode) != request[8:10]
                 or bytes.fromhex(params) != request[11:]):
             raise ValueError('HCI result does not match request')
@@ -66,6 +67,16 @@ def parse_result(raw, request):
                                              connection_data[3:9] != request[11:17]):
             raise ValueError('connection event does not match target')
         cleanup_data = bytes.fromhex(cleanup) if cleanup else None
+        frames = []
+        for line in (acl_frames or '').splitlines():
+            fields = bytes.fromhex(line.removeprefix('acl-frame '))
+            flags, length, payload = fields[0], int.from_bytes(fields[1:3], 'little'), fields[3:]
+            if flags & 15 or len(payload) != min(length, 64):
+                raise ValueError('malformed ACL frame')
+            frames.append({'flags': flags, 'length': length, 'payload_hex': payload.hex(),
+                           'truncated': len(payload) < length})
+        if len(frames) > 6 or (frames and acl_dropped is None) or (acl_dropped is not None and acl_send is None):
+            raise ValueError('incomplete ACL capture')
         acl_echo_data = None if not acl_echo or acl_echo == 'none ' else bytes.fromhex(acl_echo)
         if acl_echo_data is not None and (len(acl_echo_data) < 8 or len(acl_echo_data) > 64 or
                                           acl_echo_data[2:6] != b'\x01\x00\x09\x73' or
@@ -94,6 +105,7 @@ def parse_result(raw, request):
                 'acl_send_return': int.from_bytes(bytes.fromhex(acl_send), 'little', signed=True) if acl_send else None,
                 'acl_packets_seen': int(acl_seen, 16) if acl_seen else None,
                 'acl_echo_hex': acl_echo_data.hex() if acl_echo_data else None,
+                'acl_frames': frames, 'acl_dropped': int(acl_dropped, 16) if acl_dropped is not None else None,
                 'connection_cleanup_hex': cleanup_data.hex() if cleanup_data else None}
     except (UnicodeError, IndexError) as exc:
         raise ValueError('malformed HCI result') from exc

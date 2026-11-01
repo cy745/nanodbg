@@ -21,6 +21,14 @@ class HciRequestTests(unittest.TestCase):
         parsed_acl = parse_result(with_acl, request)
         self.assertEqual(parsed_acl['acl_send_return'], 625)
         self.assertEqual(parsed_acl['acl_echo_hex'], '0400010009730000')
+        frames = with_acl.replace(b'connection-cleanup',
+            b'acl-frame 20 04 00 01 02 03 04 \nacl-dropped 00 \nconnection-cleanup')
+        self.assertEqual(parse_result(frames, request)['acl_frames'],
+                         [{'flags': 0x20, 'length': 4, 'payload_hex': '01020304', 'truncated': False}])
+        with self.assertRaises(ValueError):
+            parse_result(frames.replace(b'20 04 00 01', b'20 05 00 01'), request)
+        with self.assertRaises(ValueError):
+            parse_result(frames.replace(b'acl-dropped 00 \n', b''), request)
         with self.assertRaises(ValueError):
             parse_result(with_acl.replace(b'echo 04 00 01 00', b'echo 05 00 01 00'), request)
         with self.assertRaises(ValueError):
