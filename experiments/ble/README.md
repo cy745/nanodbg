@@ -152,14 +152,32 @@ The host diagnostic intentionally sends only the first fragment of a two-part
 request, sends a new reset token, and then executes the hexadecimal requests
 passed on the command line. On one iPod run, the device log recorded reset in
 receive state after one accepted fragment, followed by two byte-exact new
-requests, responses, and successful explicit cleanup. Duplicate reset tokens
-are ignored by the device, though the delayed-duplicate case has not yet been
-verified on hardware. Use the same outbound file and launch instructions as
+requests, responses, and successful explicit cleanup. Duplicate reset tokens are ignored by the device. Use the same outbound file and launch instructions as
 `service_host.py`; invoke `python -m experiments.ble.recovery_host HEX [HEX ...]`.
 
 Reset is unauthenticated, discards the active message, and is not automatic on
-host timeout. This test covers abandoning an incoming message, not interruption
-while the device is transmitting, host process crashes, radio reconnection,
-or reliable exactly-once delivery. A reset token uses only two bytes and can
+host timeout. This test covers abandoning an incoming message, not host process crashes,
+radio reconnection, or reliable exactly-once delivery. A reset token uses only two bytes and can
 collide with an earlier token. The prior hook lifetime and cleanup limitations
 also apply.
+
+
+`btrecoverytxprobe.c` and `recovery_tx_host.py` test interruption in the
+other direction. The host starts a response, receives its first fragment,
+and deliberately sends no acknowledgement before issuing a reset. It then
+sends a new multi-fragment request, repeats the previous reset for three
+seconds after its first fragment, and completes two exchanges. The test
+expects `/Apps/Data/nanodbg-outbound.bin` to contain 40 bytes descending
+from `ff` to `d8`; the first request must span at least two fragments. Run
+`python -m experiments.ble.recovery_tx_host HEX [HEX ...]` with the
+corresponding diagnostic probe installed.
+
+On one hardware run, the device logged reset in transmit state (`02`) after
+one request fragment, counted 17 old reset advertisements while the next
+request was in progress, and completed two requests with byte-exact
+three-fragment responses. The log also recorded hook restoration and
+successful scan and advertising stop commands. The counter is specific to
+that experiment and is not a delivery guarantee. Only the most recent reset
+token is remembered: an older token from before a subsequent reset can still
+interrupt a session. The security, collision, cleanup and concurrency limits
+above still apply.
