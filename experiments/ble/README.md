@@ -268,3 +268,28 @@ an unacknowledged notice still blocks commands until the watchdog. Readiness
 is unauthenticated and short session identifiers can collide. BLE advertising
 and the hook are experimental, and a delayed device shutdown acknowledgement
 alone does not prove teardown.
+
+
+`btdeviceframesprobe.c` and `device_frames_host.py` extend the readiness
+experiment with a 40-byte device-generated payload split into three BLE
+advertisements. Each fragment carries the round and sequence number; the host
+acknowledges it before the device publishes the next. The payload contains
+the device tick, round and deterministic test bytes. Start the installed
+probe and invoke `python -m experiments.ble.device_frames_host HEX [HEX ...]`.
+
+In one hardware run, the host reconstructed and checked three distinct
+40-byte device messages (nine fragments total) alongside two bidirectional
+request/response exchanges. The first message started before any host BLE
+request; the host delayed its first ACK for three seconds and observed six
+additional copies. The host also observed the first request completion for
+four seconds before granting readiness. Device logs recorded all nine
+fragments, three message acknowledgements, both completed requests, hook
+restoration and successful scan/advertising stop statuses.
+
+The 40-byte content and three-fragment count are diagnostic constants, not
+a general application API. The protocol has a single outstanding message,
+uses one-byte round and sequence fields without authentication, and does
+not persist data or recover automatically across host/device restart. The
+first-fragment repeat test does not establish recovery from loss of later
+ACKs, radio disconnects, or a missing final confirmation. Other hook and
+platform limitations described above still apply.
