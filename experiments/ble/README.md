@@ -104,3 +104,26 @@ bidirectional service. It uses a fixed session value, cleartext unauthenticated
 broadcasts, one receive slot and no host-side persistence or recovery; the
 controller and hook coexistence caveats above still apply. Nearby senders can
 forge acknowledgements, and a disconnect or timeout aborts the experiment.
+
+`btduplexprobe.c` and `duplex_host.py` combine both directions into a
+40-second request/reply diagnostic. On Windows with the probe installed,
+place the 40 bytes `ff` down through `d8` in
+`/Apps/Data/nanodbg-outbound.bin`, then run
+`python -m experiments.ble.duplex_host` immediately after `wait-app`. A device
+run completed two distinct sessions in one launch: 31- and 47-byte host
+requests were reassembled exactly, and both 40-byte device replies were
+reassembled and compared by the host. The device recorded two completed
+rounds, 16 duplicate packets, zero malformed reports, and successful scan and
+advertising shutdown. Remove the temporary file afterwards.
+
+This is a fixed request/reply test, not a continuous interactive debugger API.
+It reads a static response at startup, runs for 40 seconds, uses unauthenticated
+advertisements and a two-byte session identifier, and has a single pending RX
+slot. It has no recovery after process exit, loss timeout, packet integrity
+check, concurrency protection or guaranteed delivery. The RX hook must remain
+installed only while the app remains alive. Mounting the iPod before the timer
+finishes can displace the app and prevent clean hook and radio teardown; wait
+for the complete interval before mounting, or reboot to recover. In one early
+run premature mounting lost the final device log; the repeated run above waited
+and captured teardown successfully. A separate deployment reboot confirmation
+also timed out once and needed a standalone reboot.
