@@ -16,8 +16,7 @@ does not identify which operation or interaction caused the corruption. Panic
 reboot, device-side filesystem state, competing host services, device caching,
 host mount lifecycle and the FAT rename/replace path remain hypotheses.
 
-The disabled native write implementation is intentionally excluded from the
-public repository. `home` and `disk` do not implement an install transaction.
+The earlier native write implementation is excluded from the public repository. `home` and `disk` do not implement an install transaction.
 Do not treat a successful SCSI eject or a same-session file read as proof that
 FAT metadata was durably persisted or that device and host caches are coherent.
 
@@ -61,7 +60,27 @@ overwrite experiment, so it is not an oracle for Windows FAT behavior.
 2. Establish observable ownership transitions and durable flush behavior for
    both the host volume and the device. Record failure modes separately from
    successful commands, and rule out interfering clients.
-3. Only after image-level checks, design an isolated hardware experiment with
-   recoverable test data and compare hashes and filesystem consistency across
-   fresh disconnect/reconnect and reboot cycles. Keep deployment disabled until
-   the complete sequence is reproducible.
+3. Extend hardware validation to more devices and interrupted writes; compare
+   fresh-mount hashes and consistency before treating the experimental path as
+   reliable. Automated restore remains disabled.
+
+## Native Windows deployment experiment (2026-11-02)
+
+A full Apps directory snapshot was saved and checked against the device before
+writing. A new 65,792-byte scratch file survived eject and remount unchanged.
+The replacement deployer then backed up targets, wrote files in place with
+per-file flush and immediate verification, ejected and remounted, and verified
+the installed data. An initial automatic remount failed with Windows error 21:
+a handle held across eject prevented opening a new volume handle. Closing the
+old handle before reopening fixed this in subsequent tests. This explains that
+remount failure, not the earlier FAT corruption.
+
+The full deploy/remount/reboot sequence subsequently completed on one iPod.
+After reboot the installed bytes matched again, the resident reported four
+registered apps and one launch, the BTRawProbe entry and timer files were
+present, and a debugger screenshot displayed its diagnostic screen. Windows
+read-only `chkdsk` reported no problems, but could not obtain exclusive access;
+it is not a definitive consistency check. The root cause of the original
+corruption, device-side ownership transitions and behavior under interruption
+remain unresolved. No native Windows mounted-image test was performed. The
+new deployer is experimental and has not been validated on other hosts.

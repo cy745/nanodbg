@@ -14,7 +14,8 @@ setup or a general-purpose iPod debugger. Stock firmware is not supported.
 | Linux SG_IO transport | Implemented; this package has not been validated on a native Linux host |
 | Linux home, disk mode and reboot | Not implemented |
 | macOS | Not implemented |
-| Build, deploy and autostart | Not implemented; write commands are disabled after filesystem corruption |
+| Windows deploy and autostart | Experimental; tested end-to-end on one instrumented device |
+| Build and automated restore | Not implemented |
 | Native system foreground app, system-wide touch and buttons | Not implemented |
 
 Reboot uses a firmware-specific panic path, not a graceful shutdown. The tool
@@ -38,13 +39,20 @@ python -m nanodbg screenshot screen.bmp
 python -m nanodbg tap 120 200
 python -m nanodbg home
 python -m nanodbg reboot
+python -m nanodbg deploy /path/to/Apps --autostart BTRawProbe --backup-dir /path/to/local-backups --reboot
+python -m nanodbg wait-app --timeout 75
 ```
 
 `boot-status` reads the resident boot record: registration completion indicates
 that its registration step ran, and launch fields describe recorded launches
 since boot, not necessarily the current foreground application.
 
-The last two commands currently work only on Windows. Device permissions and
+`home`, `disk`, `reboot`, and `deploy` currently work only on Windows.
+Deploy takes an already built Apps tree; it does not build firmware or apps.
+It backs up overwritten files on another volume, writes in place, ejects,
+remounts and checks bytes, then optionally reboots. Restore is manual. A pack
+containing the application name is not proof that its registration is valid;
+check `boot-status`, `wait-app`, and a screenshot after reboot. Device permissions and
 drivers depend on the host. With suitable local Python packaging tools, the
 project can also be installed with `pip install .`; the installed command is
 `nanodbg`. The runtime has no third-party Python dependencies.
@@ -55,9 +63,10 @@ On 2026-11-02, a Windows native deployment followed by reboot produced a damaged
 FAT32 app index on the test device. The cause has not been established. The
 device filesystem was repaired and its original app files restored from a local
 backup; after eject and remount the app index matched the backup and Windows
-filesystem checks reported no errors. `deploy` and `restore` are disabled until
-the write/eject path has been investigated. There is no automated deployment
-loop yet.
+filesystem checks reported no errors. The earlier corruption remains unexplained. An experimental in-place Windows
+deployment path has subsequently passed fresh-mount and reboot checks on one
+device. This limited result does not prove the sequence safe in all cases;
+keep backups. Automated restore remains disabled.
 The observations and proposed validation are recorded in the
 [filesystem investigation](docs/filesystem-investigation.md).
 

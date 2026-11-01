@@ -79,11 +79,12 @@ class DebuggerTests(unittest.TestCase):
             'usb\\vid_05ac&pid_1267\\device-b'])
         self.assertEqual(nano7_usb_ids('\0'), [])
 
-    def test_deploy_is_disabled_without_contacting_hardware(self):
-        result = subprocess.run([sys.executable, '-m', 'nanodbg', 'deploy', '.'],
+    def test_restore_is_disabled_without_contacting_hardware(self):
+        result = subprocess.run([sys.executable, '-m', 'nanodbg', 'restore', '.'],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 1)
-        self.assertIn('Filesystem writes are disabled', result.stderr)
+        self.assertIn('Automated restore remains disabled', result.stderr)
+
 
 
 if __name__ == '__main__':

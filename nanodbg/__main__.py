@@ -197,9 +197,9 @@ def main():
     sub.add_parser('home', help='flush/dismount the Windows volume and request the Home screen')
     sub.add_parser('reboot', help='experimental panic reboot and return to Home (Windows)')
     sub.add_parser('disk', help='make the Windows iPod volume available for development')
-    deploy = sub.add_parser('deploy', help='disabled: filesystem write path under investigation')
+    deploy = sub.add_parser('deploy', help='experimental Windows deploy with backup and fresh-mount verification')
     deploy.add_argument('source', help='Apps directory containing AllApps.pack and app files')
-    deploy.add_argument('--autostart', help='app executable name to autostart')
+    deploy.add_argument('--autostart', required=True, help='app executable name to autostart')
     deploy.add_argument('--backup-dir', default='nanodbg-backups')
     deploy.add_argument('--reboot', action='store_true')
     restore = sub.add_parser('restore', help='disabled: filesystem write path under investigation')
@@ -213,8 +213,8 @@ def main():
     if args.command == 'devices':
         print(json.dumps(discover(), indent=2))
         return
-    if args.command in ('deploy', 'restore'):
-        raise TransportError('Filesystem writes are disabled after corruption was observed; the write path needs investigation.')
+    if args.command == 'restore':
+        raise TransportError('Automated restore remains disabled; use the saved backup manually.')
     if args.device:
         path = args.device
     else:
@@ -239,6 +239,48 @@ def main():
             if sys.platform != 'win32': raise TransportError('disk is currently implemented on Windows only')
             windows_disk(transport)
             print(f'iPod volume available at {path[4:]}')
+        elif args.command == 'deploy':
+            if sys.platform != 'win32':
+                raise TransportError('deploy is currently implemented on Windows only')
+            from .deploy import prepare, stage, verify
+            entries = prepare(args.source, args.autostart)
+            if not (len(path) == 6 and path.startswith('\\\\.\\') and path[4].isalpha() and path[5] == ':'):
+                raise TransportError('deploy requires a Windows drive-letter volume')
+            root = Path(path[4:] + '\\') / 'Apps'
+            if Path(args.backup_dir).resolve().anchor.casefold() == root.anchor.casefold():
+                raise TransportError('Backup directory must be on a different volume from the iPod')
+            windows_disk(transport)
+            transport.close()
+            try:
+                deadline = time.monotonic() + 20
+                while not root.is_dir():
+                    if time.monotonic() >= deadline:
+                        raise TransportError('Apps directory did not become available')
+                    time.sleep(.25)
+                backup = stage(root, args.backup_dir, entries)
+                print(f'Backed up original files to {backup}; ejecting for verification', flush=True)
+            finally:
+                transport.reopen()
+                windows_home(transport)
+            # Eject invalidates the old handle; close it before opening a new one.
+            transport.close()
+            transport.reopen()
+            windows_disk(transport)
+            transport.close()
+            try:
+                deadline = time.monotonic() + 20
+                while not root.is_dir():
+                    if time.monotonic() >= deadline:
+                        raise TransportError('Apps directory did not become available for verification')
+                    time.sleep(.25)
+                verify(root, entries)
+                print('All deployment files verified after eject and remount', flush=True)
+            finally:
+                transport.reopen()
+                windows_home(transport)
+            if args.reboot:
+                windows_reboot(transport, path)
+                print('Reboot confirmed; storage ejected. Use wait-app and boot-status to verify launch.')
         elif args.command == 'status':
             state = debugger.report()
             state.pop('touch_fn', None)
