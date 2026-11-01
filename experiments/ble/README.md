@@ -359,3 +359,28 @@ responses and both outbox messages matched. The probe log reported two
 completed rounds, `hook restored`, and zero transport/controller status for
 scan and advertisement shutdown. The host shutdown event alone is not proof
 of those cleanup operations.
+
+
+### Device-initiated successive outbox messages
+
+`btautonomousprobe.c` and `python -m experiments.ble.autonomous_host` test
+two device-generated notices without sending any application request or
+readiness command. After the startup notice is acknowledged, the app schedules
+a 40-byte notice; after that notice is acknowledged, it schedules a 100-byte
+notice. The first four bytes contain the app's current tick, the fifth contains
+the sequence number, and the rest is a reproducible device-generated pattern.
+The host acknowledges each fragment and then sends a separate `b4` shutdown
+request. A two-second delay after each completed notice preserves the completion
+advertisement before publishing the next message.
+
+On 2026-11-02, a Windows host received and checked all three notices from the
+iPod: startup (5 bytes), followed by independent 40- and 100-byte notices.
+The app reported ticks 7291 and 11760 for the latter, zero completed inbound
+request rounds, three acknowledged notices, restored hook, and zero transport
+and controller statuses for stopping scan and advertisement. This verifies
+the specific experiment, not an unrestricted duplex service: the two messages
+are acknowledgement-gated and fixed in advance, there is one advertising slot,
+no authentication or confidentiality, and the host cannot concurrently send
+application data while a notice is pending. The 180-second watchdog and hook
+lifecycle limitations still apply. The experiment adds a separate `b4`/`b5`
+shutdown command only after both notices, not a general cancellation protocol.
