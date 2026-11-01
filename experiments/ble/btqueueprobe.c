@@ -70,6 +70,12 @@ static int command(uint16_t op, const void *p, uint8_t len) {
 }
 static void save(void) { hb_fs_write("/Apps/Data/rawprobe.txt",report,rp+1); }
 static int publish(const uint8_t *p, int len) {
+#ifdef QUEUE_TEST_STARTUP_FAIL_ONCE
+    static int startup_failure;
+    if (!startup_failure && len>=4 && p[0]==0xb0 && p[1]==0) {
+        startup_failure=1; append("injected startup publish failure\n"); return -1;
+    }
+#endif
 #ifdef QUEUE_TEST_FAIL_ONCE
     static int injected_failure;
     if (!injected_failure && len>=4 && p[0]==0xb0 && p[1]==0x80) {
@@ -91,6 +97,11 @@ static void notice(lv_timer_t *t) {
         startup[4]=0; data=startup; n=5;
     }
     if (!nano_ble_outbox_send(&outbox,rounds & 255,data,n)) { append("outbox created length "); hexbyte(n); append("\n"); }
+    else if (rounds==0 && !stopping) {
+        append("startup publish failed; retry scheduled\n");
+        notice_timer=lv_timer_create(notice,2000,0);
+        lv_timer_set_repeat_count(notice_timer,1);
+    }
 
 }
 static void schedule_pump(void);

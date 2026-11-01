@@ -545,6 +545,17 @@ can keep the queue blocked until the watchdog. The compile-time
 `QUEUE_TEST_FAIL_ONCE` option injects one artificial failure for notice `0x80`
 before making the HCI call; ordinary builds do not enable it.
 
+The initial startup notice is also retried after two seconds if its first
+publish fails. The retry continues until success or the 180-second watchdog;
+the shared timer keeps queued messages from being published ahead of startup.
+The separate `QUEUE_TEST_STARTUP_FAIL_ONCE` build option injects one failure
+before the startup HCI call. In a 2026-11-02 hardware run, the device logged
+that injection, scheduled a retry, published and received acknowledgement of
+startup, and completed a 20-byte request with correct reverse and echo data.
+The log also recorded hook restoration and zero scan/advertising stop statuses.
+This simulated failure does not demonstrate recovery from a real controller
+failure, a lost startup acknowledgement, or a continuously failing radio.
+
 On 2026-11-02, `python -m experiments.ble.queue_race_host` ran with this
 fault-injection build. After the first fragment of a 40-byte host request was
 acknowledged, two taps were injected while the request remained in progress.
