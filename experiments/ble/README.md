@@ -417,3 +417,30 @@ data across both directions, not general asynchronous full-duplex operation:
 there is still no event queue or concurrency arbitration, and messages are
 unauthenticated broadcasts. Never treat the two-byte session or one-byte
 notice IDs as security.
+
+
+### Bounded event queue experiment
+
+`nano_ble_queue.[ch]` adds a four-entry FIFO of copied messages, each at most
+216 bytes, and `test_queue.c` checks bounds, full and empty behavior, copying,
+ordering and ring wrap. The caller must serialize queue access.
+`btqueueprobe.c` uses it for touch events: one message may be advertising while
+four others wait. A full queue rejects new clicks and counts the rejection.
+The probe schedules the next notice two seconds after the previous notice is
+confirmed, and gives queued notices priority over new host requests.
+`python -m experiments.ble.queue_host` tests the matching firmware.
+
+On 2026-11-02, the host injected six alternating button clicks before sending
+any notice ACK. It then received the first five in FIFO order, sent a seven-byte
+request and checked its reply and echo. The device log showed queue depths
+one through four, one full-queue rejection, zero remaining entries, hook
+restoration and successful scan/advertising shutdown. One deployment reboot
+could not confirm USB removal; a subsequent explicit reboot was confirmed
+before the test.
+
+This remains an experiment: a full queue drops new events, overflow is only
+recorded in the device log, messages are not persisted, send failures have no
+automatic retry, and a two-second completion window plus single advertising
+slot limits throughput. Host and device traffic still do not run concurrently;
+there is no authentication or confidentiality. These observations do not
+establish general reliable transport or cross-platform host support.
