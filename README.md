@@ -15,6 +15,7 @@ setup or a general-purpose iPod debugger. Stock firmware is not supported.
 | Linux home, disk mode and reboot | Not implemented |
 | macOS | Not implemented |
 | Windows deploy and autostart | Experimental; tested end-to-end on one instrumented device |
+| BLE advertisement experiment | Short binary payloads tested both ways on one Windows host and one device; not a connection or reliable stream |
 | Build and automated restore | Not implemented |
 | Native system foreground app, system-wide touch and buttons | Not implemented |
 
@@ -78,3 +79,29 @@ device backups or memory dumps. Please do not commit those artifacts.
 
 The original device-side project is [nano7-untethered](https://github.com/olievans123/nano7-untethered);
 its license notices accompany the experimental patch.
+
+## Experimental BLE probes
+
+On the tested firmware, one-shot device probes sent and received short binary
+BLE advertisements. The device-side research sources are in
+[experiments/ble](experiments/ble/README.md); they require the separately built
+NanoApps SDK and are not part of the installed firmware by default. The
+prototype changes shared controller settings and is not a reliable or secure
+transport. Do not run concurrent Bluetooth activity during a test.
+
+Install optional dependencies with `pip install .[ble]`. With the matching
+probe deployed on the iPod and the host radio already on:
+
+```sh
+python -m nanodbg ble advertise 00ff8066aa1122330042 --duration 60
+python -m nanodbg ble scan 00ff4e616e6f4442478001fe32303236 --duration 60
+```
+
+Run each command with the corresponding device receive or transmit probe; they
+are separate tests. Advertising is implemented and tested on Windows only.
+Scanning uses Bleak and has been tested on Windows; Linux and macOS are
+unverified. The commands do not enable or disable the host radio. Advertising
+payloads are limited to 23 bytes and scanning matches up to 26 bytes. The
+experimental `0xffff` manufacturer field is a test marker, not an assigned
+company identifier for production use. No pairing, acknowledgement, encryption,
+fragmentation or retransmission is provided.

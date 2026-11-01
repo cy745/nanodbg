@@ -209,7 +209,17 @@ def main():
     tap = sub.add_parser('tap')
     tap.add_argument('x', type=int)
     tap.add_argument('y', type=int)
+    ble = sub.add_parser('ble', help='experimental short BLE advertisement tests')
+    ble_sub = ble.add_subparsers(dest='ble_command', required=True)
+    for action in ('scan', 'advertise'):
+        command = ble_sub.add_parser(action)
+        command.add_argument('payload_hex', help='expected or transmitted payload as hexadecimal bytes')
+        command.add_argument('--duration', type=float, default=20)
     args = parser.parse_args()
+    if args.command == 'ble':
+        from .ble import run
+        run(args.ble_command, args.payload_hex, args.duration)
+        return
     if args.command == 'devices':
         print(json.dumps(discover(), indent=2))
         return
