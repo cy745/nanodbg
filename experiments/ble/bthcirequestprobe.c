@@ -13,6 +13,20 @@ static rx_feed_t original_rx;
 static volatile uint32_t *rx_slot;
 static uint8_t connection_address[6];
 static int connection_accepted;
+#ifdef ACL_ECHO_PROBE
+typedef struct {
+    uint8_t reserved0, index;
+    uint16_t reserved1, remaining, offset;
+    uint32_t reserved2;
+    uint8_t type, reserved3;
+    uint16_t size;
+    const void *data;
+    uint32_t reserved4;
+} acl_segment_buffer;
+typedef int (*acl_send_t)(int type, int handle, const void *data, unsigned len);
+static int acl_started, acl_send_rc;
+static const uint8_t echo_request[]={12,0,1,0,8,0x73,8,0,'N','A','N','O','A','C','L','!'};
+#endif
 static int inquiry_hook(uint8_t *buf, uint16_t len) {
     if (buf) h4_event_feed(&inquiry_event,buf,len);
     return original_rx ? original_rx(buf,len) : 0;
@@ -20,6 +34,20 @@ static int inquiry_hook(uint8_t *buf, uint16_t len) {
 static void save(void) { hb_fs_write("/Apps/Data/hci-result.txt",report,used+1); }
 static void finish_connection(lv_timer_t *timer) {
     (void)timer;
+#ifdef ACL_ECHO_PROBE
+    if (!acl_started && connection_accepted && inquiry_event.found && inquiry_event.data[0]==0) {
+        acl_started=1;
+        uint16_t handle=(inquiry_event.data[1] | ((uint16_t)inquiry_event.data[2]<<8)) & 0x0fff;
+        inquiry_event.acl_handle=handle;
+        inquiry_event.acl_capture=1;
+        acl_segment_buffer buffer={0};
+        buffer.remaining=buffer.size=sizeof echo_request;
+        buffer.data=echo_request;
+        acl_send_rc=((acl_send_t)(BT_HCI_SEND_STAGED | 1u))(2,handle | 0x2000,&buffer,sizeof echo_request);
+        lv_timer_t *wait=lv_timer_create(finish_connection,3000,0);
+        if (wait) { lv_timer_set_repeat_count(wait,1); return; }
+    }
+#endif
     append("connection-complete ");
     if (inquiry_event.found) {
         for (unsigned i=0;i<11;i++) hexbyte(inquiry_event.data[i]);
@@ -28,6 +56,18 @@ static void finish_connection(lv_timer_t *timer) {
     int restored=*rx_slot==((uint32_t)&inquiry_hook | 1u);
     if (restored) { *rx_slot=(uint32_t)original_rx; append("restored\n"); }
     else append("changed\n");
+#ifdef ACL_ECHO_PROBE
+    if (acl_started) {
+        append("acl-send ");
+        for (unsigned i=0;i<4;i++) hexbyte(((uint32_t)acl_send_rc >> (8*i)) & 255);
+        append("seen "); hexbyte(inquiry_event.acl_seen>255 ? 255 : inquiry_event.acl_seen);
+        append("echo ");
+        if (inquiry_event.acl_found) {
+            for (unsigned i=0;i<inquiry_event.acl_length;i++) hexbyte(inquiry_event.acl_data[i]);
+        } else append("none ");
+        append("\n");
+    }
+#endif
     if (restored && connection_accepted && (!inquiry_event.found || inquiry_event.data[0]==0)) {
         uint8_t out[16], status=0xff, event=0, params[6]; int outlen=0;
         uint16_t op;

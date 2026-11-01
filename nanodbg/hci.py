@@ -32,11 +32,12 @@ def parse_result(raw, request):
             r'((?:inquiry-result [0-9a-f]{2} [0-9a-f]{2} (?:[0-9a-f]{2} )*\r?\n)*)'
             r'(?:inquiry-dropped ([0-9a-f]{2}) \r?\n)?)?'
             r'(?:connection-complete (none |(?:[0-9a-f]{2} ){11})hook (restored|changed)\r?\n'
+            r'(?:acl-send ((?:[0-9a-f]{2} ){4})seen ([0-9a-f]{2}) echo (none |(?:[0-9a-f]{2} )+)\r?\n)?'
             r'(?:connection-cleanup ((?:[0-9a-f]{2} ){5})\r?\n)?)?', text)
         if not match:
             raise ValueError('malformed HCI result')
         (nonce, opcode, params, rc, status, event, data, inquiry, hook, records, dropped,
-         connection, connection_hook, cleanup) = match.groups()
+         connection, connection_hook, acl_send, acl_seen, acl_echo, cleanup) = match.groups()
         if (bytes.fromhex(nonce) != request[4:8] or bytes.fromhex(opcode) != request[8:10]
                 or bytes.fromhex(params) != request[11:]):
             raise ValueError('HCI result does not match request')
@@ -65,6 +66,12 @@ def parse_result(raw, request):
                                              connection_data[3:9] != request[11:17]):
             raise ValueError('connection event does not match target')
         cleanup_data = bytes.fromhex(cleanup) if cleanup else None
+        acl_echo_data = None if not acl_echo or acl_echo == 'none ' else bytes.fromhex(acl_echo)
+        if acl_echo_data is not None and (len(acl_echo_data) < 8 or len(acl_echo_data) > 64 or
+                                          acl_echo_data[2:6] != b'\x01\x00\x09\x73' or
+                                          int.from_bytes(acl_echo_data[:2], 'little') != len(acl_echo_data)-4 or
+                                          int.from_bytes(acl_echo_data[6:8], 'little') != len(acl_echo_data)-8):
+            raise ValueError('malformed ACL echo capture')
         connection_info = None
         if connection_data is not None:
             connection_info = {'status': connection_data[0],
@@ -84,6 +91,9 @@ def parse_result(raw, request):
                 'connection_complete_hex': connection_data.hex() if connection_data else None,
                 'connection_complete': connection_info,
                 'connection_hook': connection_hook,
+                'acl_send_return': int.from_bytes(bytes.fromhex(acl_send), 'little', signed=True) if acl_send else None,
+                'acl_packets_seen': int(acl_seen, 16) if acl_seen else None,
+                'acl_echo_hex': acl_echo_data.hex() if acl_echo_data else None,
                 'connection_cleanup_hex': cleanup_data.hex() if cleanup_data else None}
     except (UnicodeError, IndexError) as exc:
         raise ValueError('malformed HCI result') from exc

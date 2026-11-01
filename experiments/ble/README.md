@@ -679,6 +679,39 @@ successful ACL payload transfer, and the disconnect completion was not
 observed. The automated experiment used Windows; the HCI command itself is
 not dependent on Windows, but no macOS or Linux host run was performed.
 
+### L2CAP echo over ACL
+
+An opt-in `ACL_ECHO_PROBE` build extends that experiment: after successful
+connection it sends one L2CAP Echo Request on CID 0x0001 through the staged
+firmware sender as H4 ACL type 0x02, waits three seconds for a matching Echo
+Response on the same handle, then performs the same cleanup. This is not
+enabled in the normal request probe. The response capture accepts a complete
+single ACL packet up to 64 bytes and does not reassemble fragments. The fixed
+identifier 0x73 and shared system stack permit possible interference; the
+reported `acl_send_return` is a firmware return value, not an HCI success
+status. `acl_packets_seen` saturates at 255. The raw response remains available
+in `acl_echo_hex`. The wait and callback are not synchronized.
+
+The existing live firmware dump's Thumb disassembly shows that `0x080f6b00`
+selects a five-byte header for type 2, writes type, handle/flags and 16-bit
+length, and copies the staged data at `0x080f7348` before submitting. This is
+specific to the investigated firmware and is not a portable API. IDA was not
+available in the local environment; the existing Capstone script
+`build-env/136-send-full.py` provided the disassembly of the raw memory dump,
+which has no standard import table.
+
+On 2026-11-02, the opt-in build connected to the independently identified
+Windows adapter, sent an Echo Request containing `NANOACL!`, and captured
+`0400010009730000` on the same ACL handle: CID 1, Echo Response code 9,
+identifier 0x73 and zero response data. The connection and disconnect command
+statuses were zero, the hook reported restored, and the radio was restored to
+off. This single response supports bidirectional L2CAP signaling, but the
+remote did not echo the eight data bytes, so it does not verify their delivery
+or arbitrary application data. The matching length checks were tightened after
+the run; the recorded response satisfies them, but that revision has not yet
+been repeated on hardware. Disconnect completion was not captured.
+See the [Bluetooth L2CAP specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-54/out/en/host/logical-link-control-and-adaptation-protocol-specification.html).
+
 
 ### Events during a host request and initial-publish retry
 

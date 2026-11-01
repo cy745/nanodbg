@@ -14,6 +14,10 @@ typedef struct {
     unsigned header_size, header_used, remaining, used;
     volatile int found;
     uint8_t match_address, address[6];
+    volatile int acl_capture, acl_found;
+    uint16_t acl_handle, acl_length;
+    volatile unsigned acl_seen;
+    uint8_t acl_scratch[64], acl_data[64];
     uint8_t scratch[H4_INQUIRY_MAX_BYTES];
     h4_inquiry_record records[H4_INQUIRY_MAX_RECORDS];
     volatile unsigned record_count, dropped;
@@ -23,6 +27,7 @@ static void h4_event_init(h4_event_parser *p, uint8_t code, uint8_t length) {
     p->type=0; p->header_size=0; p->header_used=0; p->remaining=0; p->used=0;
     p->code=code; p->wanted_length=length; p->found=0;
     p->match_address=0;
+    p->acl_capture=0; p->acl_found=0; p->acl_seen=0; p->acl_length=0;
     p->record_count=0; p->dropped=0;
 }
 
@@ -31,6 +36,20 @@ static int h4_is_inquiry_result(uint8_t code) {
 }
 
 static void h4_event_finish(h4_event_parser *p) {
+    if (p->type==2 && p->acl_capture &&
+        ((p->header[0] | ((unsigned)p->header[1]<<8)) & 0x0fff)==p->acl_handle) {
+        unsigned length=p->header[2] | ((unsigned)p->header[3]<<8);
+        p->acl_seen++;
+        if (!p->acl_found && (p->header[1] & 0x30)==0x20 && length>=8 && length<=64 &&
+            (p->acl_scratch[0] | ((unsigned)p->acl_scratch[1]<<8))==length-4 &&
+            (p->acl_scratch[6] | ((unsigned)p->acl_scratch[7]<<8))==length-8 &&
+            p->acl_scratch[2]==1 && p->acl_scratch[3]==0 &&
+            p->acl_scratch[4]==9 && p->acl_scratch[5]==0x73) {
+            p->acl_length=length;
+            for (unsigned j=0;j<length;j++) p->acl_data[j]=p->acl_scratch[j];
+            p->acl_found=1;
+        }
+    }
     if (p->type==4 && h4_is_inquiry_result(p->header[0])) {
         if (p->record_count < H4_INQUIRY_MAX_RECORDS) {
             h4_inquiry_record *r=&p->records[p->record_count];
@@ -76,6 +95,9 @@ static void h4_event_feed(h4_event_parser *p, const uint8_t *data, unsigned leng
                 }
             }
         } else {
+            if (p->type==2 && p->acl_capture &&
+                ((p->header[2] | ((unsigned)p->header[3]<<8))-p->remaining)<64)
+                p->acl_scratch[(p->header[2] | ((unsigned)p->header[3]<<8))-p->remaining]=b;
             if (p->type==4 && h4_is_inquiry_result(p->header[0]) &&
                 p->header[1]-p->remaining < H4_INQUIRY_MAX_BYTES)
                 p->scratch[p->header[1]-p->remaining]=b;

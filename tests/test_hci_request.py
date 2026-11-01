@@ -16,6 +16,13 @@ class HciRequestTests(unittest.TestCase):
         self.assertEqual(parsed['connection_complete']['address'], '06:05:04:03:02:01')
         self.assertEqual(parsed['connection_complete']['handle'], 0x234)
         self.assertEqual(parsed['connection_cleanup_hex'], '060400000f')
+        with_acl = raw.replace(b'connection-cleanup',
+            b'acl-send 71 02 00 00 seen 01 echo 04 00 01 00 09 73 00 00 \nconnection-cleanup')
+        parsed_acl = parse_result(with_acl, request)
+        self.assertEqual(parsed_acl['acl_send_return'], 625)
+        self.assertEqual(parsed_acl['acl_echo_hex'], '0400010009730000')
+        with self.assertRaises(ValueError):
+            parse_result(with_acl.replace(b'echo 04 00 01 00', b'echo 05 00 01 00'), request)
         with self.assertRaises(ValueError):
             parse_result(raw.replace(b'34 02 01 02 03 04 05 06', b'34 02 01 02 03 04 05 07'), request)
 

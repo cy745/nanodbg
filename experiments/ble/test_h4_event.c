@@ -40,5 +40,12 @@ int main(void) {
     assert(!p.found);
     h4_event_feed(&p,connection,sizeof connection);
     assert(p.found && p.data[1]==0x34 && p.data[8]==6);
+    p.acl_capture=1; p.acl_handle=0x234;
+    const uint8_t wrong_length[]={2,0x34,0x22,8,0,5,0,1,0,9,0x73,0,0};
+    h4_event_feed(&p,wrong_length,sizeof wrong_length);
+    assert(p.acl_seen==1 && !p.acl_found);
+    const uint8_t echo[]={2,0x34,0x22,8,0,4,0,1,0,9,0x73,0,0};
+    for (unsigned i=0;i<sizeof echo;i++) h4_event_feed(&p,echo+i,1);
+    assert(p.acl_seen==2 && p.acl_found && p.acl_length==8 && p.acl_data[5]==0x73);
     return 0;
 }
