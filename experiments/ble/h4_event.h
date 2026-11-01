@@ -13,6 +13,7 @@ typedef struct {
     uint8_t type, header[4], code, wanted_length, data[255];
     unsigned header_size, header_used, remaining, used;
     volatile int found;
+    uint8_t match_address, address[6];
     uint8_t scratch[H4_INQUIRY_MAX_BYTES];
     h4_inquiry_record records[H4_INQUIRY_MAX_RECORDS];
     volatile unsigned record_count, dropped;
@@ -21,6 +22,7 @@ typedef struct {
 static void h4_event_init(h4_event_parser *p, uint8_t code, uint8_t length) {
     p->type=0; p->header_size=0; p->header_used=0; p->remaining=0; p->used=0;
     p->code=code; p->wanted_length=length; p->found=0;
+    p->match_address=0;
     p->record_count=0; p->dropped=0;
 }
 
@@ -39,7 +41,15 @@ static void h4_event_finish(h4_event_parser *p) {
         } else p->dropped++;
     }
     if (!p->found && p->type==4 && p->header[0]==p->code &&
-        p->header[1]==p->wanted_length) p->found=1;
+        p->header[1]==p->wanted_length) {
+        int match=1;
+        if (p->match_address) {
+            if (p->wanted_length<9) match=0;
+            else for (unsigned j=0;j<6;j++)
+                if (p->data[3+j]!=p->address[j]) match=0;
+        }
+        if (match) p->found=1;
+    }
     p->type=0;
 }
 

@@ -4,6 +4,21 @@ from nanodbg.hci import decode_extended_inquiry, parse_result
 
 
 class HciRequestTests(unittest.TestCase):
+    def test_connection_event_requires_requested_address(self):
+        request = encode_request(0x0405, bytes.fromhex('01020304050618cc0100000001'), b'abcd')
+        raw = (b'hci-request-v1\nnonce 61 62 63 64 opcode 05 04 '
+               b'params 01 02 03 04 05 06 18 cc 01 00 00 00 01 \n'
+               b'rc 00 status 00 event 0f data \n'
+               b'connection-complete 00 34 02 01 02 03 04 05 06 01 00 hook restored\n'
+               b'connection-cleanup 06 04 00 00 0f \n\0')
+        parsed = parse_result(raw, request)
+        self.assertEqual(parsed['connection_complete_hex'], '0034020102030405060100')
+        self.assertEqual(parsed['connection_complete']['address'], '06:05:04:03:02:01')
+        self.assertEqual(parsed['connection_complete']['handle'], 0x234)
+        self.assertEqual(parsed['connection_cleanup_hex'], '060400000f')
+        with self.assertRaises(ValueError):
+            parse_result(raw.replace(b'34 02 01 02 03 04 05 06', b'34 02 01 02 03 04 05 07'), request)
+
     def test_extended_inquiry_fixed_header(self):
         payload = bytes.fromhex('01080a8f21129c010010010a9203ce0000')
         result = decode_extended_inquiry(payload, 255)

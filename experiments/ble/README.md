@@ -80,7 +80,8 @@ Complete event during a three-second window, reporting `inquiry_complete_status`
 and whether its hook was restored. `null` means no such event was observed,
 not necessarily that the operation failed. The event carries no command ID;
 another inquiry or a concurrent system user can confound correlation. Longer
-inquiries can outlive the window. Other asynchronous completions are not yet
+inquiries can outlive the window. Create Connection (`0x0405`) also has a
+dedicated capture described below; other asynchronous completions are not yet
 captured. Keep the probe active until the hook is restored, and reboot if the
 result says the hook changed. The parser assumes an H4 frame boundary.
 The controller, shared hook, timeout and parser synchronization limits above
@@ -648,6 +649,35 @@ not independently verified. These are discovery events, not evidence of an
 ACL connection or arbitrary classic Bluetooth data transfer. Captures lack
 timestamps and callback synchronization, and the finite window and buffer
 mean they are not a complete census.
+
+### Classic ACL connection experiment
+
+For a 13-byte Create Connection (`0x0405`) request, the probe captures the
+first Connection Complete event matching the requested address during a
+seven-second window. The event's status, address, link type and, on success,
+connection handle are available in `connection_complete`. The raw event and
+hook-restoration result are also retained. Once the hook is restored, an
+accepted request is followed by Disconnect (`0x0406`) after a successful
+completion, or Create Connection Cancel (`0x0408`) if no completion was
+observed. `connection_cleanup_hex` contains the cleanup opcode in little
+endian followed by signed return code, controller status and response event.
+Command Status success is only acceptance: the probe does not capture the
+later Disconnection Complete, and a missing completion or a cleanup failure
+does not prove the final link state. Reboot after an uncertain outcome.
+Events are filtered by address but carry no request identifier; concurrent
+system connections to the same target can confound correlation. The shared
+hook and timer are not synchronized with the callback, so timing races remain.
+
+On 2026-11-02 the host adapter address was independently matched to the
+previous Inquiry result. With that Windows adapter temporarily enabled and
+connectable, a hardware request using packet type `0xcc18` returned Command
+Status zero and then a matching Connection Complete with status zero and ACL
+link type `0x01`. Disconnect returned Command Status zero and the hook was
+reported restored. The host radio was turned back off and the iPod rebooted
+into the baseline app. One connection run establishes neither pairing nor
+successful ACL payload transfer, and the disconnect completion was not
+observed. The automated experiment used Windows; the HCI command itself is
+not dependent on Windows, but no macOS or Linux host run was performed.
 
 
 ### Events during a host request and initial-publish retry

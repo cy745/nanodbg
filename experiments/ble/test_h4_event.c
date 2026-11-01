@@ -31,5 +31,14 @@ int main(void) {
     assert(p.records[1].data[31]==31);
     for (int i=0;i<6;i++) h4_event_feed(&p,result,sizeof result);
     assert(p.record_count==6 && p.dropped==2);
+    h4_event_init(&p,3,11);
+    p.match_address=1;
+    for (unsigned i=0;i<6;i++) p.address[i]=(uint8_t)(i+1);
+    const uint8_t connection[]={4,3,11,0,0x34,0x02,1,2,3,4,5,6,1,0};
+    const uint8_t wrong[]={4,3,11,0,0x34,0x02,1,2,3,4,5,7,1,0};
+    h4_event_feed(&p,wrong,sizeof wrong);
+    assert(!p.found);
+    h4_event_feed(&p,connection,sizeof connection);
+    assert(p.found && p.data[1]==0x34 && p.data[8]==6);
     return 0;
 }

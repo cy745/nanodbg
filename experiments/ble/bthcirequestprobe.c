@@ -11,11 +11,39 @@ static void hexbyte(unsigned b) { const char *h="0123456789abcdef"; char s[4]={h
 static h4_event_parser inquiry_event;
 static rx_feed_t original_rx;
 static volatile uint32_t *rx_slot;
+static uint8_t connection_address[6];
+static int connection_accepted;
 static int inquiry_hook(uint8_t *buf, uint16_t len) {
     if (buf) h4_event_feed(&inquiry_event,buf,len);
     return original_rx ? original_rx(buf,len) : 0;
 }
 static void save(void) { hb_fs_write("/Apps/Data/hci-result.txt",report,used+1); }
+static void finish_connection(lv_timer_t *timer) {
+    (void)timer;
+    append("connection-complete ");
+    if (inquiry_event.found) {
+        for (unsigned i=0;i<11;i++) hexbyte(inquiry_event.data[i]);
+    } else append("none ");
+    append("hook ");
+    int restored=*rx_slot==((uint32_t)&inquiry_hook | 1u);
+    if (restored) { *rx_slot=(uint32_t)original_rx; append("restored\n"); }
+    else append("changed\n");
+    if (restored && connection_accepted && (!inquiry_event.found || inquiry_event.data[0]==0)) {
+        uint8_t out[16], status=0xff, event=0, params[6]; int outlen=0;
+        uint16_t op;
+        if (inquiry_event.found && inquiry_event.data[0]==0) {
+            op=0x0406;
+            params[0]=inquiry_event.data[1]; params[1]=inquiry_event.data[2]; params[2]=0x13;
+        } else {
+            op=0x0408;
+            for (unsigned i=0;i<6;i++) params[i]=connection_address[i];
+        }
+        int rc=bt_hci_cmd_ack(op,params,op==0x0406 ? 3 : 6,out,sizeof out,&outlen,&status,&event);
+        append("connection-cleanup "); hexbyte(op & 255); hexbyte(op >> 8);
+        hexbyte(rc & 255); hexbyte(status); hexbyte(event); append("\n");
+    }
+    save();
+}
 static void finish_inquiry(lv_timer_t *timer) {
     (void)timer;
     append("inquiry-complete ");
@@ -52,12 +80,16 @@ static void run(lv_timer_t *timer) {
         append("opcode "); hexbyte(request[8]); hexbyte(request[9]);
         append("params "); for (unsigned i=0;i<request[10];i++) hexbyte(request[11+i]); append("\n");
         int capture=0;
-        if (opcode==0x0401 && bt_is_on()) {
+        if ((opcode==0x0401 || (opcode==0x0405 && request[10]==13)) && bt_is_on()) {
             uint32_t obj=*(volatile uint32_t *)BT_TRANSPORT_SLOT;
             rx_slot=(volatile uint32_t *)(obj+BT_SLOT_RX);
             original_rx=(rx_feed_t)*rx_slot;
             if (original_rx) {
-                h4_event_init(&inquiry_event,0x01,1);
+                h4_event_init(&inquiry_event,opcode==0x0401 ? 0x01 : 0x03,opcode==0x0401 ? 1 : 11);
+                if (opcode==0x0405) {
+                    inquiry_event.match_address=1;
+                    for (unsigned i=0;i<6;i++) inquiry_event.address[i]=connection_address[i]=request[11+i];
+                }
                 *rx_slot=(uint32_t)&inquiry_hook | 1u;
                 capture=1;
             }
@@ -67,9 +99,11 @@ static void run(lv_timer_t *timer) {
         append("event "); hexbyte(response_event);
         append("data "); for (int i=0;i<outlen;i++) hexbyte(out[i]); append("\n");
         if (capture) {
-            lv_timer_t *wait=lv_timer_create(finish_inquiry,3000,0);
+            connection_accepted=(rc==0 && status==0);
+            lv_timer_t *wait=lv_timer_create(opcode==0x0401 ? finish_inquiry : finish_connection,
+                                             opcode==0x0401 ? 3000 : 7000,0);
             if (wait) lv_timer_set_repeat_count(wait,1);
-            else finish_inquiry(0);
+            else if (opcode==0x0401) finish_inquiry(0); else finish_connection(0);
             return;
         }
     }
