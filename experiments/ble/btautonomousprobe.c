@@ -213,4 +213,3 @@ HB_APP_ENTRY(payload_entry) {
     lv_obj_t *label=lv_label_create(lv_screen_active()); lv_label_set_text(label,"BLE autonomous outbox test");
     lv_timer_t *timer=lv_timer_create(start,5000,0); lv_timer_set_repeat_count(timer,1);
 }
-
