@@ -2,7 +2,7 @@
 #include "lvgl/lvgl.h"
 #include "bt_hci.h"
 #include "nano_ble_outbox.h"
-#include "nano_ble_queue.h"
+#include "nano_ble_messages.h"
 static uint8_t frame[260], payload[26], last[26];
 static volatile int pending; static int last_len, updates;
 static uint8_t message[217], incoming[216], session[2];
@@ -13,7 +13,7 @@ static void finish(lv_timer_t *t);
 static volatile int frame_len, frame_total, skip, found, payload_len, malformed;
 static int round_no;
 static int service_ready, tap_count, tap_dropped;
-static nano_ble_queue tap_queue;
+static nano_ble_messages tap_messages;
 static uint32_t rxslot;
 static rx_feed_t original;
 static char report[4096]; static int rp;
@@ -92,13 +92,14 @@ static void pump(lv_timer_t *t) {
     (void)t; notice_timer=0;
     if (!service_ready || stopping || outbox.pending ||
         (state!=0 && state!=3) || (state==3 && rounds>notice_sent_round)) return;
-    const nano_ble_queued_message *m=nano_ble_queue_front(&tap_queue);
-    if (m && !nano_ble_outbox_send(&outbox,m->id,m->data,m->length)) {
-        append("queue sent id "); hexbyte(m->id); append("\n"); nano_ble_queue_pop(&tap_queue);
-    } else if (m) { append("queue send failed; retry scheduled\n"); schedule_pump(); }
+    const nano_ble_queued_message *m=nano_ble_queue_front(&tap_messages.queue);
+    uint8_t id=m ? m->id : 0;
+    int rc=nano_ble_messages_pump(&tap_messages,&outbox);
+    if (rc==1) { append("queue sent id "); hexbyte(id); append("\n"); }
+    else if (rc==NANO_MSG_PUBLISH) { append("queue send failed; retry scheduled\n"); schedule_pump(); }
 }
 static void schedule_pump(void) {
-    if (tap_queue.count && !notice_timer && !stopping) {
+    if (tap_messages.queue.count && !notice_timer && !stopping) {
         notice_timer=lv_timer_create(pump,2000,0); lv_timer_set_repeat_count(notice_timer,1);
     }
 }
@@ -115,9 +116,9 @@ static void tap_event(lv_event_t *event) {
 #endif
     for (int i=0;i<4;i++) data[i]=(tick>>(8*i))&255;
     data[4]=button; data[5]=tap_count+1;
-    if (!nano_ble_queue_push(&tap_queue,0x80+tap_count,data,length)) {
+    if (nano_ble_messages_submit(&tap_messages,data,length,0)==NANO_MSG_OK) {
         tap_count++; append("tap queued button "); hexbyte(button); append("count "); hexbyte(tap_count);
-        append("depth "); hexbyte(tap_queue.count); append("\n");
+        append("depth "); hexbyte(tap_messages.queue.count); append("\n");
         if (!outbox.pending && !notice_timer) pump(0);
     } else { tap_dropped++; append("tap queue full\n"); }
 }
@@ -138,7 +139,7 @@ static void update(lv_timer_t *t) {
         pending=0; return;
     }
     if (outbox.pending) { pending=0; return; }
-    if (len==3 && payload[0]==0xb4 && !stopping && state==0 && !tap_queue.count && !notice_timer) {
+    if (len==3 && payload[0]==0xb4 && !stopping && state==0 && !tap_messages.queue.count && !notice_timer) {
         uint8_t ack[3]={0xb5,payload[1],payload[2]};
         if (!publish(ack,3)) {
             stopping=1; append("tap shutdown requested\n");
@@ -151,7 +152,7 @@ static void update(lv_timer_t *t) {
         notice(0); if (outbox.pending) { notice_sent_round=rounds; append("notice ready accepted\n"); }
         pending=0; return;
     }
-    if (len==3 && payload[0]==0xa6 && payload[1]==session[0] && payload[2]==session[1] && state==3 && !stopping && !tap_queue.count && !notice_timer) {
+    if (len==3 && payload[0]==0xa6 && payload[1]==session[0] && payload[2]==session[1] && state==3 && !stopping && !tap_messages.queue.count && !notice_timer) {
         uint8_t ack[3]={0xa7,session[0],session[1]};
         if (!publish(ack,3)) {
             stopping=1; append("shutdown requested\n");
@@ -171,7 +172,7 @@ static void update(lv_timer_t *t) {
         } else if (state==1 && rx_seq>0) late_reset_duplicates++;
         pending=0; return;
     }
-    if ((tap_queue.count || notice_timer) && (state==0 || state==3)) { pending=0; return; }
+    if ((tap_messages.queue.count || notice_timer) && (state==0 || state==3)) { pending=0; return; }
     if (len >= 6 && payload[0]==0xa1 && payload[4]>0 && payload[4]<=12 && payload[3]<payload[4] && len<=23) {
         int seq=payload[3];
         if ((state==0 || state==3) && seq==0 && (state==0 || payload[1]!=session[0] || payload[2]!=session[1])) {
@@ -207,7 +208,7 @@ static void finish(lv_timer_t *t) {
     append("hook restored\n");
     static const uint8_t no_scan[2]={0,0}, no_adv[1]={0};
     command(0x200c,no_scan,2); command(0x200a,no_adv,1);
-    append("tap dropped "); hexbyte(tap_dropped); append("queue remaining "); hexbyte(tap_queue.count); append("\n");
+    append("tap dropped "); hexbyte(tap_dropped); append("queue remaining "); hexbyte(tap_messages.queue.count); append("\n");
     append("matches "); hexbyte(found & 255); hexbyte((found >> 8) & 255);
     append("malformed "); hexbyte(malformed & 255); append("updates "); hexbyte(updates); append("duplicates "); hexbyte(duplicates & 255);
     append("notice acks "); hexbyte(notice_acks); append("late reset duplicates "); hexbyte(late_reset_duplicates & 255); append("complete "); hexbyte(complete); append("rounds "); hexbyte(rounds); append("length "); hexbyte(msg_len); append("\n"); save();
@@ -226,7 +227,7 @@ static void start(lv_timer_t *t) {
     *(volatile uint32_t *)rxslot=(uint32_t)&on_rx | 1u;
     append("both enabled\n");
     nano_ble_outbox_init(&outbox,publish);
-    nano_ble_queue_init(&tap_queue);
+    nano_ble_messages_init(&tap_messages);
     service_ready=1;
     notice(0);
     save();

@@ -449,7 +449,7 @@ transmissions or an authenticated, persistent stream.
 #### Variable-length device-originated data
 
 Build `btqueueprobe.c` with `QUEUE_VARIABLE_DATA=1` (alongside `bt_hci.c`,
-`nano_ble_outbox.c` and `nano_ble_queue.c`) to make buttons A and B enqueue
+`nano_ble_outbox.c`, `nano_ble_queue.c` and `nano_ble_messages.c`) to make buttons A and B enqueue
 40 and 216 bytes respectively. The first four bytes are the device tick in
 little-endian order, followed by the button and event counter. The rest is
 generated on the device from the tick, byte offset and button. Without the
@@ -463,6 +463,28 @@ notices including startup and echo, no dropped touches, an empty queue, hook
 restoration and successful scan and advertising disable commands. This
 verifies the queue's maximum message size on this device, but the generated
 data is still a diagnostic payload rather than a general application API.
+
+#### Reusable device-side message submission
+
+`nano_ble_messages.[ch]` packages ID assignment and the bounded FIFO for an
+application to submit its own bytes. After initializing the messages object
+and outbox, call `nano_ble_messages_submit(&messages, bytes, length, &id)`
+from the serialized application context. The data is copied, so the caller
+may reuse its buffer. `NANO_MSG_OK` means accepted into the queue, not delivered;
+invalid input, a full queue and exhaustion of the 127 IDs have distinct return
+codes. The caller must schedule `nano_ble_messages_pump` when the outbox is
+available, route received acknowledgments through `nano_ble_outbox_ack`, and
+notify its application of completion if needed. A failed initial publish
+retains the front message for a later pump. Do not reinitialize while the host
+session is running: reusing an ID can cause its duplicate filter to drop data.
+
+On 2026-11-02 the queue probe was rebuilt to use this interface and tested on
+the iPod with `queue_variable_host`: 40- and 216-byte device-generated
+messages and a 40-byte host request matched byte for byte. Native C tests also
+cover copy semantics, capacity, retry, busy outbox and ID exhaustion. This is
+an application-facing queue helper, not a complete standalone Bluetooth stack:
+the application still owns radio setup, the receive hook, arbitration, timers,
+ACK handling and cleanup. It remains an unauthenticated experimental protocol.
 
 `nano_ble_queue.[ch]` adds a four-entry FIFO of copied messages, each at most
 216 bytes, and `test_queue.c` checks bounds, full and empty behavior, copying,
