@@ -127,3 +127,22 @@ for the complete interval before mounting, or reboot to recover. In one early
 run premature mounting lost the final device log; the repeated run above waited
 and captured teardown successfully. A separate deployment reboot confirmation
 also timed out once and needed a standalone reboot.
+
+`btserviceprobe.c` and `service_host.py` extend the duplex diagnostic with
+user-specified hexadecimal requests and a host-initiated shutdown. After
+installing the probe and supplying `/Apps/Data/nanodbg-outbound.bin`, run
+`python -m experiments.ble.service_host HEXREQUEST [HEXREQUEST ...]` as soon
+as `wait-app` reports the app. Each request receives the static file contents.
+After the final exchange the host requests shutdown, observes a pre-cleanup
+acknowledgement, and waits four seconds for the device to restore its hook and
+turn off scanning and advertising. A 120-second fallback timer also stops the
+probe. In a device run, two custom requests and a 24-byte binary response
+matched; the device log confirmed the shutdown request, hook restoration and
+successful HCI stop commands. The acknowledgement alone does not prove cleanup:
+verify the log after the wait, especially if the connection is interrupted.
+
+This remains a finite experiment, not a general interactive transport: the
+response is a file loaded once at startup, a stalled session cannot be reset,
+the protocol has no authentication or integrity and its short session tags can
+collide. The cleanup marker records a pointer write, not proof that firmware
+callbacks have quiesced. Do not switch apps or mount media before cleanup.
