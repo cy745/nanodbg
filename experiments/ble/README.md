@@ -27,6 +27,39 @@ Native C tests cover a split completion, an embedded false match, unmatched and
 short completions, a 520-byte ACL packet and a nonzero controller status. The
 hardware run does not prove correct behavior for all traffic or concurrency.
 
+### Host-specified HCI request probe
+
+`bthcirequestprobe.c` loads one host-prepared command from
+`/Apps/Data/hci-request.bin` and writes `/Apps/Data/hci-result.txt` after its
+five-second startup delay. Build it as BTRawProbe alongside `bt_hci.c` and
+`h4_complete.c`; this repository still does not package the NanoApps SDK build.
+From the repository root, prepare a request on the host:
+
+```sh
+python -m experiments.ble.hci_request 200b 00600030000000 hci-request.bin
+```
+
+The printed nonce identifies the request. Copy the file to the device path,
+eject and verify it as appropriate, deploy this probe, reboot, and read the
+result after the app runs. Result fields record the nonce, little-endian opcode,
+parameters, one-byte two's-complement return code, controller status and
+successful Command Complete data. Check the nonce: an old result can otherwise
+be mistaken for the new one. A failed command may not return its extra data.
+
+This is a file-driven, one-command-per-launch experiment, not a live HCI
+debugger. **The request executes again on every launch while the file remains
+present**; remove the request and restore the normal app after testing. Commands
+can change shared controller state, and this probe does not undo those changes.
+Commands that complete through Command Status or later events are unsupported.
+The controller, shared hook, timeout and parser synchronization limits above
+apply. Result writing and request transfer are not yet automated by nanodbg.
+
+On 2026-11-02 two separately prepared requests were tested on one iPod: LE Set
+Scan Parameters (`0x200b`, `00600030000000`) returned rc `00`, status `00`;
+`0x1405` with parameters `ff0f` returned rc `fc` (-4), status `12`. Both
+result nonces and parameter bytes matched their request files. After the tests
+the request and result files were removed and the baseline app was restored.
+
 `btscanprobe.c` scans briefly and stores the first matching payload from a
 manufacturer advertisement with company field `ffff` and prefix `NDBG` in
 `/Apps/Data/rawprobe.txt`. `btadvertiseprobe.c` reads 1-26 bytes from
