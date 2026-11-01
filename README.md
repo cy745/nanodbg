@@ -95,10 +95,11 @@ probe deployed on the iPod and the host radio already on:
 ```sh
 python -m nanodbg ble advertise 00ff8066aa1122330042 --duration 60
 python -m nanodbg ble scan 00ff4e616e6f4442478001fe32303236 --duration 60
+python -m nanodbg ble roundtrip 0123456789abcdef00 aabbcc00ff112280ff
 ```
 
-Run each command with the corresponding device receive or transmit probe; they
-are separate tests. Advertising is implemented and tested on Windows only.
+Run each command with its corresponding device probe. The two-message
+roundtrip has timing constraints described in the device probe README. Advertising is implemented and tested on Windows only.
 Scanning uses Bleak and has been tested on Windows; Linux and macOS are
 unverified. The commands do not enable or disable the host radio. Advertising
 payloads are limited to 23 bytes and scanning matches up to 26 bytes. The

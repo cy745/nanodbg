@@ -19,3 +19,20 @@ manufacturer advertisement with company field `ffff` and prefix `NDBG` in
 are described in the top-level README. These are experimental test identifiers,
 not a production Bluetooth protocol. Data is unauthenticated and broadcast in
 cleartext. The files are persistent; remove sensitive payloads after testing.
+
+`btechoprobe.c` performs two receive-then-transmit windows during a single
+launch, then stops. After deploying it as `BTRawProbe`, start the Windows host
+command as soon as the homebrew surface is visible:
+
+```sh
+python -m nanodbg wait-app --timeout 65
+python -m nanodbg ble roundtrip 0123456789abcdef00 aabbcc00ff112280ff
+```
+
+The timing is tied to this probe: five seconds after launch it scans for ten
+seconds, rebroadcasts the first matching payload for ten seconds, then repeats
+once. Start the host command immediately after `wait-app`; another client can
+win the first-payload race. This test has no authentication, sequence numbers,
+acknowledgement, retry or delivery guarantee. The Windows host was tested with
+the instrumented iPod; other hosts remain unverified. The RX hook points into
+the running app, so do not switch away while either receive window is active.

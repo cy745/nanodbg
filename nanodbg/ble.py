@@ -73,6 +73,24 @@ async def advertise(data, duration):
         publisher.stop()
 
 
+
+async def roundtrip(payloads):
+    """Run the bounded, two-window echo probe; start when its surface appears."""
+    for index, data in enumerate(payloads, 1):
+        print(json.dumps({'round': index, 'send_hex': data.hex()}), flush=True)
+        await advertise(data, 8)
+        await scan(data, 18)
+    print(json.dumps({'rounds_completed': len(payloads)}), flush=True)
+
+
+def run_roundtrip(values):
+    if not 1 <= len(values) <= 2:
+        raise ValueError('the two-window echo probe accepts one or two payloads')
+    payloads = [parse_payload(value, 23) for value in values]
+    if len(set(payloads)) != len(payloads):
+        raise ValueError('use distinct payloads to distinguish the two rounds')
+    asyncio.run(roundtrip(payloads))
+
 def run(command, payload_hex, duration):
     if duration <= 0:
         raise ValueError('duration must be positive')

@@ -215,10 +215,15 @@ def main():
         command = ble_sub.add_parser(action)
         command.add_argument('payload_hex', help='expected or transmitted payload as hexadecimal bytes')
         command.add_argument('--duration', type=float, default=20)
+    exchange = ble_sub.add_parser('roundtrip', help='run the two-window device echo experiment')
+    exchange.add_argument('payload_hex', nargs='+', help='one or two distinct hex payloads')
     args = parser.parse_args()
     if args.command == 'ble':
-        from .ble import run
-        run(args.ble_command, args.payload_hex, args.duration)
+        from .ble import run, run_roundtrip
+        if args.ble_command == 'roundtrip':
+            run_roundtrip(args.payload_hex)
+        else:
+            run(args.ble_command, args.payload_hex, args.duration)
         return
     if args.command == 'devices':
         print(json.dumps(discover(), indent=2))

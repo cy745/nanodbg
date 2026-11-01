@@ -6,7 +6,7 @@ import types
 import unittest
 from unittest.mock import patch
 
-from nanodbg.ble import parse_payload, scan
+from nanodbg.ble import parse_payload, scan, roundtrip, run_roundtrip
 
 class BleTests(unittest.TestCase):
     def test_payload_validation(self):
@@ -14,6 +14,20 @@ class BleTests(unittest.TestCase):
         for value in ('', 'gg', '00112233'):
             with self.assertRaises(ValueError):
                 parse_payload(value, 3)
+
+    def test_roundtrip_preserves_order_and_rejects_duplicates(self):
+        calls = []
+        async def advertise(data, duration):
+            calls.append(('send', data, duration))
+        async def scan(data, duration):
+            calls.append(('receive', data, duration))
+        with patch('nanodbg.ble.advertise', advertise), patch('nanodbg.ble.scan', scan):
+            with contextlib.redirect_stdout(io.StringIO()):
+                asyncio.run(roundtrip([b'\x00', b'\xff']))
+        self.assertEqual(calls, [('send', b'\x00', 8), ('receive', b'\x00', 18),
+                                 ('send', b'\xff', 8), ('receive', b'\xff', 18)])
+        with self.assertRaises(ValueError):
+            run_roundtrip(['00', '00'])
 
     def test_scan_filters_and_counts_binary_payload(self):
         class Scanner:
