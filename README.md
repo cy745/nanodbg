@@ -53,6 +53,8 @@ backup; after eject and remount the app index matched the backup and Windows
 filesystem checks reported no errors. `deploy` and `restore` are disabled until
 the write/eject path has been investigated. There is no automated deployment
 loop yet.
+The observations and proposed validation are recorded in the
+[filesystem investigation](docs/filesystem-investigation.md).
 
 ## Development
 
