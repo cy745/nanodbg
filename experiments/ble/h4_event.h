@@ -1,6 +1,11 @@
 #ifndef NANO_H4_EVENT_H
 #define NANO_H4_EVENT_H
 #include <stdint.h>
+#define H4_INQUIRY_MAX_RECORDS 6
+#define H4_INQUIRY_MAX_BYTES 32
+typedef struct {
+    uint8_t code, length, saved, data[H4_INQUIRY_MAX_BYTES];
+} h4_inquiry_record;
 
 /* Captures the first exact event code/length in a serialized H4 stream.
  * As with h4_complete, the stream must start at a packet boundary. */
@@ -8,11 +13,34 @@ typedef struct {
     uint8_t type, header[4], code, wanted_length, data[255];
     unsigned header_size, header_used, remaining, used;
     volatile int found;
+    uint8_t scratch[H4_INQUIRY_MAX_BYTES];
+    h4_inquiry_record records[H4_INQUIRY_MAX_RECORDS];
+    volatile unsigned record_count, dropped;
 } h4_event_parser;
 
 static void h4_event_init(h4_event_parser *p, uint8_t code, uint8_t length) {
     p->type=0; p->header_size=0; p->header_used=0; p->remaining=0; p->used=0;
     p->code=code; p->wanted_length=length; p->found=0;
+    p->record_count=0; p->dropped=0;
+}
+
+static int h4_is_inquiry_result(uint8_t code) {
+    return code==0x02 || code==0x22 || code==0x2f;
+}
+
+static void h4_event_finish(h4_event_parser *p) {
+    if (p->type==4 && h4_is_inquiry_result(p->header[0])) {
+        if (p->record_count < H4_INQUIRY_MAX_RECORDS) {
+            h4_inquiry_record *r=&p->records[p->record_count];
+            r->code=p->header[0]; r->length=p->header[1];
+            r->saved=r->length < H4_INQUIRY_MAX_BYTES ? r->length : H4_INQUIRY_MAX_BYTES;
+            for (unsigned j=0;j<r->saved;j++) r->data[j]=p->scratch[j];
+            p->record_count++;
+        } else p->dropped++;
+    }
+    if (!p->found && p->type==4 && p->header[0]==p->code &&
+        p->header[1]==p->wanted_length) p->found=1;
+    p->type=0;
 }
 
 static void h4_event_feed(h4_event_parser *p, const uint8_t *data, unsigned length) {
@@ -34,19 +62,16 @@ static void h4_event_feed(h4_event_parser *p, const uint8_t *data, unsigned leng
                     if (p->type==5) p->remaining &= 0x3fff;
                 }
                 if (!p->remaining) {
-                    if (!p->found && p->type==4 && p->header[0]==p->code && !p->wanted_length)
-                        p->found=1;
-                    p->type=0;
+                    h4_event_finish(p);
                 }
             }
         } else {
+            if (p->type==4 && h4_is_inquiry_result(p->header[0]) &&
+                p->header[1]-p->remaining < H4_INQUIRY_MAX_BYTES)
+                p->scratch[p->header[1]-p->remaining]=b;
             if (!p->found && p->type==4 && p->header[0]==p->code &&
                 p->header[1]==p->wanted_length) p->data[p->used++]=b;
-            if (!--p->remaining) {
-                if (!p->found && p->type==4 && p->header[0]==p->code &&
-                    p->header[1]==p->wanted_length) p->found=1;
-                p->type=0;
-            }
+            if (!--p->remaining) h4_event_finish(p);
         }
     }
 }

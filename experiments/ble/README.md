@@ -626,6 +626,29 @@ slot limits throughput. Host and device traffic still do not run concurrently;
 there is no authentication or confidentiality. These observations do not
 establish general reliable transport or cross-platform host support.
 
+### Classic Bluetooth inquiry results
+
+The HCI request probe captures up to six asynchronous Inquiry Result (0x02),
+Inquiry Result with RSSI (0x22), or Extended Inquiry Result (0x2f) events in
+its three-second observation window. Each record contains the original length
+and up to 32 raw parameter bytes; the drop counter saturates at 255. A missing
+counter is reported as null for older probes. Extended Inquiry Result records
+with a valid fixed header additionally expose the device address, class,
+clock offset, RSSI and captured EIR prefix. EIR is normally truncated: the
+standard event contains 255 parameter bytes. See the Bluetooth Core
+[HCI specification](https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Core-60/out/en/host-controller-interface/host-controller-interface-functional-specification.html), section 7.7.38.
+
+On 2026-11-02, a hardware run issued Inquiry (`0401`, parameters
+`338b9e0100`) while the Windows host radio was temporarily discoverable.
+The command and Inquiry Complete both reported status zero; the hook was
+restored and three 0x2f events were captured with no recorded overflow. Two
+events shared an address, so at least two distinct devices responded. The
+host's radio was restored to its previous off state. Device identities were
+not independently verified. These are discovery events, not evidence of an
+ACL connection or arbitrary classic Bluetooth data transfer. Captures lack
+timestamps and callback synchronization, and the finite window and buffer
+mean they are not a complete census.
+
 
 ### Events during a host request and initial-publish retry
 

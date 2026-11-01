@@ -20,5 +20,16 @@ int main(void) {
     assert(!p.found);
     h4_event_feed(&p,other,sizeof other);
     assert(p.found && p.data[0]==0);
+    const uint8_t result[]={4,0x22,4,1,2,3,4};
+    h4_event_feed(&p,result,sizeof result);
+    assert(p.record_count==1 && p.records[0].code==0x22 && p.records[0].length==4);
+    assert(p.records[0].saved==4 && p.records[0].data[3]==4);
+    const uint8_t long_header[]={4,0x2f,40};
+    h4_event_feed(&p,long_header,sizeof long_header);
+    for (uint8_t i=0;i<40;i++) h4_event_feed(&p,&i,1);
+    assert(p.record_count==2 && p.records[1].length==40 && p.records[1].saved==32);
+    assert(p.records[1].data[31]==31);
+    for (int i=0;i<6;i++) h4_event_feed(&p,result,sizeof result);
+    assert(p.record_count==6 && p.dropped==2);
     return 0;
 }

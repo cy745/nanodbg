@@ -25,6 +25,15 @@ static void finish_inquiry(lv_timer_t *timer) {
         *rx_slot=(uint32_t)original_rx;
         append("restored\n");
     } else append("changed\n");
+    for (unsigned i=0;i<inquiry_event.record_count;i++) {
+        h4_inquiry_record *r=&inquiry_event.records[i];
+        append("inquiry-result "); hexbyte(r->code); hexbyte(r->length);
+        for (unsigned j=0;j<r->saved;j++) hexbyte(r->data[j]);
+        append("\n");
+    }
+    append("inquiry-dropped ");
+    hexbyte(inquiry_event.dropped > 255 ? 255 : inquiry_event.dropped);
+    append("\n");
     save();
 }
 

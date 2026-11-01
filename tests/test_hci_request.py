@@ -1,9 +1,21 @@
 import unittest
 from experiments.ble.hci_request import encode_request
-from nanodbg.hci import parse_result
+from nanodbg.hci import decode_extended_inquiry, parse_result
 
 
 class HciRequestTests(unittest.TestCase):
+    def test_extended_inquiry_fixed_header(self):
+        payload = bytes.fromhex('01080a8f21129c010010010a9203ce0000')
+        result = decode_extended_inquiry(payload, 255)
+        self.assertEqual(result['address'], '9C:12:21:8F:0A:08')
+        self.assertEqual(result['class_of_device'], '0A0110')
+        self.assertEqual(result['clock_offset'], 0x0392)
+        self.assertEqual(result['rssi_dbm'], -50)
+        self.assertEqual(result['eir_prefix_hex'], '0000')
+        self.assertIsNone(decode_extended_inquiry(payload, 254))
+        self.assertIsNone(decode_extended_inquiry(payload[:14], 255))
+        self.assertIsNone(decode_extended_inquiry(b'\x02' + payload[1:], 255))
+
     def test_parameterized_and_empty_commands(self):
         self.assertEqual(encode_request(0x200b, bytes.fromhex('00600030000000'), b'abcd'),
                          b'HCP1abcd\x0b\x20\x07\x00\x60\x00\x30\x00\x00\x00')
@@ -32,6 +44,13 @@ class HciRequestTests(unittest.TestCase):
         no_capture = with_event[:-1] + b'inquiry-complete none hook changed\n\0'
         self.assertIsNone(parse_result(no_capture, request)['inquiry_complete_status'])
         self.assertEqual(parse_result(no_capture, request)['inquiry_hook'], 'changed')
+        records = (capture[:-1] + b'inquiry-result 22 04 01 02 03 04 \n'
+                   b'inquiry-dropped 01 \n\0')
+        parsed = parse_result(records, request)
+        self.assertEqual(parsed['inquiry_results'][0]['payload_hex'], '01020304')
+        self.assertEqual(parsed['inquiry_dropped'], 1)
+        with self.assertRaises(ValueError):
+            parse_result(records.replace(b'04 01 02 03 04', b'05 01 02 03 04'), request)
         with self.assertRaises(ValueError):
             parse_result(raw, encode_request(0x1405, b'\xff\x0f', b'xxxx'))
         with self.assertRaises(ValueError):
