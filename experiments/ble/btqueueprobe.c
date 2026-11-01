@@ -64,6 +64,12 @@ static int command(uint16_t op, const void *p, uint8_t len) {
 }
 static void save(void) { hb_fs_write("/Apps/Data/rawprobe.txt",report,rp+1); }
 static int publish(const uint8_t *p, int len) {
+#ifdef QUEUE_TEST_FAIL_ONCE
+    static int injected_failure;
+    if (!injected_failure && len>=4 && p[0]==0xb0 && p[1]==0x80) {
+        injected_failure=1; append("injected publish failure\n"); return -1;
+    }
+#endif
     uint8_t data[32]={0}; data[0]=len+4; data[1]=len+3; data[2]=0xff; data[3]=0xff; data[4]=0xff;
     for (int i=0;i<len;i++) data[5+i]=p[i];
     if (command(0x2008,data,32)) return -1;
@@ -81,6 +87,7 @@ static void notice(lv_timer_t *t) {
     if (!nano_ble_outbox_send(&outbox,rounds & 255,data,n)) { append("outbox created length "); hexbyte(n); append("\n"); }
 
 }
+static void schedule_pump(void);
 static void pump(lv_timer_t *t) {
     (void)t; notice_timer=0;
     if (!service_ready || stopping || outbox.pending ||
@@ -88,7 +95,7 @@ static void pump(lv_timer_t *t) {
     const nano_ble_queued_message *m=nano_ble_queue_front(&tap_queue);
     if (m && !nano_ble_outbox_send(&outbox,m->id,m->data,m->length)) {
         append("queue sent id "); hexbyte(m->id); append("\n"); nano_ble_queue_pop(&tap_queue);
-    } else if (m) append("queue send failed\n");
+    } else if (m) { append("queue send failed; retry scheduled\n"); schedule_pump(); }
 }
 static void schedule_pump(void) {
     if (tap_queue.count && !notice_timer && !stopping) {

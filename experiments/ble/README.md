@@ -439,8 +439,32 @@ could not confirm USB removal; a subsequent explicit reboot was confirmed
 before the test.
 
 This remains an experiment: a full queue drops new events, overflow is only
-recorded in the device log, messages are not persisted, send failures have no
-automatic retry, and a two-second completion window plus single advertising
+recorded in the device log, messages are not persisted, only initial queued-message publish failures are
+retried, and a two-second completion window plus single advertising
 slot limits throughput. Host and device traffic still do not run concurrently;
 there is no authentication or confidentiality. These observations do not
 establish general reliable transport or cross-platform host support.
+
+
+### Events during a host request and initial-publish retry
+
+The queue probe now keeps its front message when the first attempt to publish
+fails and schedules another attempt after two seconds, repeating until success
+or the probe watchdog. This covers only the initial queued-notice publish, not
+every fragment, lost completion, or recovery after restart. Persistent failures
+can keep the queue blocked until the watchdog. The compile-time
+`QUEUE_TEST_FAIL_ONCE` option injects one artificial failure for notice `0x80`
+before making the HCI call; ordinary builds do not enable it.
+
+On 2026-11-02, `python -m experiments.ble.queue_race_host` ran with this
+fault-injection build. After the first fragment of a 40-byte host request was
+acknowledged, two taps were injected while the request remained in progress.
+The request's reversed response and original echo matched. The device log
+showed both events queued during the request, the deliberately injected
+publish failure, retry scheduling, subsequent sends of IDs `0x80` and `0x81`,
+and no dropped or remaining events. The host received both in order; cleanup
+restored the hook and returned successful scan/advertising stop statuses.
+This is a synthetic failure at the publish boundary, not a demonstrated HCI
+controller error. It tests overlapping event creation and inbound traffic,
+while radio transmissions are still serialized. The first deploy's reboot
+was not confirmed; an explicit subsequent reboot succeeded before the run.
